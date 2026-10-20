@@ -1,0 +1,21 @@
+dsh-apply-patch — GPL fork
+
+Based on https://github.com/fonlan/dsh-apply-patch
+Original work: Copyright (c) 2026 fonlan
+Original license: MIT; the complete notice is retained in LICENSES/MIT.txt.
+
+Modifications: Copyright (c) 2026 miaobuao
+Modified on 2026-10-20: align Codex patch parsing/application behavior,
+add compatibility tests, and distribute this fork under GPL-3.0-or-later.
+The original MIT grant remains applicable to the upstream material.
+
+Patch parsing/application adaptations and test fixtures reference:
+https://github.com/openai/codex
+Commit: 014489466a1739c2c563cdfe57880c2c7c8680e3
+OpenAI Codex
+Copyright 2025 OpenAI
+License: Apache-2.0; see LICENSES/Apache-2.0.txt.
+The upstream fixtures are unmodified except for their README attribution.
+
+This fork as a whole is distributed under GPL-3.0-or-later (see LICENSE).
+Third-party components retain their original notices and license grants.

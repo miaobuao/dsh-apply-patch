@@ -1,4 +1,10 @@
 /**
+ * Original work: Copyright (c) 2026 fonlan (MIT; see LICENSES/MIT.txt).
+ * Modifications: Copyright (c) 2026 miaobuao.
+ * Modified 2026-10-20: Codex compatibility and regression coverage.
+ * This fork is distributed under GPL-3.0-or-later; see LICENSE and NOTICE.
+ */
+/**
  * The `apply_patch` tool definition.
  *
  * Model-facing name and argument shape mirror OpenAI Codex's apply_patch
@@ -35,10 +41,10 @@ export const APPLY_PATCH_DESCRIPTION = [
   'Rules:',
   '* The first line must be `*** Begin Patch` and the last `*** End Patch`.',
   '* `*** Update File:` edits an existing file; hunks are blocks of `-`/`+`/` ` lines, optionally anchored by an `@@ context` line. Context must match exactly (whitespace-insensitive fallbacks apply).',
-  '* `*** Add File:` creates a new file; every content line must start with `+`. Fails if the file already exists.',
+  '* `*** Add File:` creates a new file; every content line must start with `+`. Overwrites the file if it already exists.',
   '* `*** Delete File:` removes an existing file (through the sandbox).',
   '* `*** Move to:` (inside an Update hunk) writes the updated content to the destination path and removes the original.',
-  '* `*** End of File` inside an Update hunk anchors the following block at the end of the file.',
+  '* `*** End of File` inside an Update hunk anchors the preceding block at the end of the file.',
   '* All paths are resolved against the session working directory.',
   '* All writes go through the DSH sandbox: a denied operation returns a `[sandbox: ...]` error — do not retry another way.',
 ].join('\n')

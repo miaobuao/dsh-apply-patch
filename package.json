@@ -2,10 +2,10 @@
   "name": "@fonlan/dsh-apply-patch",
   "version": "0.1.6",
   "description": "DSH plugin: a codex-style apply_patch tool (*** Begin Patch / *** Update File / *** Add File / *** Delete File) injected into the model toolset through DSH's built-in sandbox, with a settings card to choose injection scope (off / GPT models only / all models).",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fonlan/dsh-apply-patch.git"
+    "url": "git+https://github.com/miaobuao/dsh-apply-patch.git"
   },
   "keywords": [
     "dsh",
@@ -36,7 +36,16 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSES",
+    "NOTICE",
+    "CHANGELOG.md",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "tsconfig.client.json",
+    "tsdown.config.ts",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml"
   ],
   "publishConfig": {
     "access": "public"

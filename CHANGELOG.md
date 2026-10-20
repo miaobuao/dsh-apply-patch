@@ -1,5 +1,12 @@
 # 变更记录
 
+## Unreleased
+
+- Distribute this fork under GPL-3.0-or-later, preserving upstream MIT and Codex Apache-2.0 notices.
+
+- Align patch parsing and application with Codex `0144894`: overwrite on Add, Unicode matching, source context and newline preservation, append placement, and EOF cursor/state constraints.
+- Add 25 upstream compatibility fixtures and sandbox overwrite regression coverage.
+
 兼容性一栏列出该版本支持的 DSH 宿主版本区间。
 
 ## 0.1.6

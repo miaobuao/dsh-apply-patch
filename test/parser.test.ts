@@ -1,4 +1,10 @@
 /**
+ * Original work: Copyright (c) 2026 fonlan (MIT; see LICENSES/MIT.txt).
+ * Modifications: Copyright (c) 2026 miaobuao.
+ * Modified 2026-10-20: Codex compatibility and regression coverage.
+ * This fork is distributed under GPL-3.0-or-later; see LICENSE and NOTICE.
+ */
+/**
  * Parser tests: codex-format compliance (ported expectations from
  * openai/codex's apply-patch parser tests).
  */
@@ -57,14 +63,14 @@ describe('parsePatch boundaries', () => {
 describe('parsePatch add hunks', () => {
   it('parses a simple add', () => {
     assert.deepEqual(
-      parsePatch(wrap('*** Add File: foo\n+hi\n')),
+      parsePatch(wrap('*** Add File: foo\n+hi')),
       [{ kind: 'add', path: 'foo', contents: 'hi\n' }],
     )
   })
 
   it('parses multi-line add preserving newlines', () => {
     assert.deepEqual(
-      parsePatch(wrap('*** Add File: path/add.py\n+abc\n+def\n')),
+      parsePatch(wrap('*** Add File: path/add.py\n+abc\n+def')),
       [{ kind: 'add', path: 'path/add.py', contents: 'abc\ndef\n' }],
     )
   })
@@ -77,7 +83,7 @@ describe('parsePatch add hunks', () => {
 describe('parsePatch delete hunks', () => {
   it('parses a delete', () => {
     assert.deepEqual(
-      parsePatch(wrap('*** Delete File: path/delete.py\n')),
+      parsePatch(wrap('*** Delete File: path/delete.py')),
       [{ kind: 'delete', path: 'path/delete.py' }],
     )
   })
@@ -89,7 +95,7 @@ describe('parsePatch delete hunks', () => {
 
 describe('parsePatch update hunks', () => {
   it('parses a context + replace chunk', () => {
-    const hunks = parsePatch(wrap('*** Update File: path/update.py\n@@ def f():\n-    pass\n+    return 123\n'))
+    const hunks = parsePatch(wrap('*** Update File: path/update.py\n@@ def f():\n-    pass\n+    return 123'))
     assert.deepEqual(hunks, [{
       kind: 'update',
       path: 'path/update.py',
@@ -104,7 +110,7 @@ describe('parsePatch update hunks', () => {
   })
 
   it('parses bare @@ and a context line into one chunk', () => {
-    const hunks = parsePatch(wrap('*** Update File: file.py\n@@\n+line\n'))
+    const hunks = parsePatch(wrap('*** Update File: file.py\n@@\n+line'))
     assert.deepEqual(hunks, [{
       kind: 'update',
       path: 'file.py',
@@ -223,7 +229,7 @@ describe('parsePatch update hunks', () => {
   })
 
   it('parses Move to', () => {
-    const hunks = parsePatch(wrap('*** Update File: path/update.py\n*** Move to: path/update2.py\n@@ def f():\n-    pass\n+    return 123\n'))
+    const hunks = parsePatch(wrap('*** Update File: path/update.py\n*** Move to: path/update2.py\n@@ def f():\n-    pass\n+    return 123'))
     assert.deepEqual(hunks, [{
       kind: 'update',
       path: 'path/update.py',
@@ -238,7 +244,7 @@ describe('parsePatch update hunks', () => {
   })
 
   it('rejects an empty update hunk', () => {
-    assert.throws(() => parsePatch(wrap('*** Update File: test.py\n')), /empty/)
+    assert.throws(() => parsePatch(wrap('*** Update File: test.py')), /empty/)
   })
 
   it('parses multiple hunks in one patch', () => {

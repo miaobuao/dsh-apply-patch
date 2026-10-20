@@ -1,10 +1,16 @@
 /**
+ * Original work: Copyright (c) 2026 fonlan (MIT; see LICENSES/MIT.txt).
+ * Modifications: Copyright (c) 2026 miaobuao.
+ * Modified 2026-10-20: Codex compatibility and regression coverage.
+ * This fork is distributed under GPL-3.0-or-later; see LICENSE and NOTICE.
+ */
+/**
  * Codex-format apply_patch applier over DSH's sandboxed capability seams.
  *
  * Ports the application semantics of openai/codex's apply-patch crate
  * (codex-rs/apply-patch/src/lib.rs + seek_sequence.rs): chunk context
- * anchoring, verbatim old-line matching with codex's three-tier lenience
- * (exact → rstrip → trim), end-of-file anchoring, and pure-insertion
+ * anchoring, verbatim old-line matching with codex's matching lenience
+ * (exact → rstrip → trim → Unicode punctuation normalisation), end-of-file anchoring, and pure-insertion
  * placement, then applies the resulting replacement list.
  *
  * All mutations go through DSH's built-in sandbox:
@@ -64,7 +70,7 @@ function seekSequence(
   if (pattern.length === 0) return start
   if (pattern.length > lines.length) return null
   const searchStart = eof && lines.length >= pattern.length
-    ? lines.length - pattern.length
+    ? Math.max(lines.length - pattern.length, start)
     : start
   const max = lines.length - pattern.length
 
@@ -90,6 +96,14 @@ function seekSequence(
   for (let i = searchStart; i <= max; i++) if (exact(i)) return i
   for (let i = searchStart; i <= max; i++) if (rstrip(i)) return i
   for (let i = searchStart; i <= max; i++) if (trim(i)) return i
+  const normalise = (value: string) => value.trim()
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/[\u2018-\u201b]/g, "'")
+    .replace(/[\u201c-\u201f]/g, '"')
+    .replace(/[\u00a0\u2002-\u200a\u202f\u205f\u3000]/g, ' ')
+  for (let i = searchStart; i <= max; i++) {
+    if (pattern.every((line, k) => normalise(lines[i + k]) === normalise(line))) return i
+  }
   return null
 }
 
@@ -112,11 +126,8 @@ function computeReplacements(
     }
 
     if (chunk.oldLines.length === 0) {
-      // Pure addition: insert at end (before the trailing empty line if present).
-      const insertionIdx = originalLines[originalLines.length - 1] === ''
-        ? originalLines.length - 1
-        : originalLines.length
-      replacements.push([insertionIdx, 0, chunk.newLines.slice()])
+      // Pure addition appends after every logical source line, including blank lines.
+      replacements.push([originalLines.length, 0, chunk.newLines.slice()])
       continue
     }
 
@@ -140,7 +151,19 @@ function computeReplacements(
         `Failed to find expected lines in ${path}:\n${chunk.oldLines.join('\n')}`,
       )
     }
-    replacements.push([found, pattern.length, newSlice.slice()])
+    let oldStart = 0
+    let newStart = 0
+    for (const [oldContext, newContext] of chunk.contextLineIndices ?? []) {
+      if (oldContext >= pattern.length || newContext >= newSlice.length) break
+      if (oldStart !== oldContext || newStart !== newContext) {
+        replacements.push([found + oldStart, oldContext - oldStart, newSlice.slice(newStart, newContext)])
+      }
+      oldStart = oldContext + 1
+      newStart = newContext + 1
+    }
+    if (oldStart !== pattern.length || newStart !== newSlice.length) {
+      replacements.push([found + oldStart, pattern.length - oldStart, newSlice.slice(newStart)])
+    }
     lineIndex = found + pattern.length
   }
 
@@ -148,24 +171,29 @@ function computeReplacements(
   return replacements
 }
 
-/** Apply replacement triplets to a line array (descending order, like codex). */
-function applyReplacements(lines: string[], replacements: Array<[number, number, string[]]>): string[] {
-  const next = lines.slice()
-  for (let r = replacements.length - 1; r >= 0; r--) {
-    const [start, oldLen, newSegment] = replacements[r]
-    next.splice(start, oldLen, ...newSegment)
-  }
-  return next
-}
-
-/** Derive the new file text from chunks (codex `derive_new_contents_from_chunks`). */
+/** Preserve source terminators and context bytes, as Codex SourceFile does. */
 export function deriveNewContents(originalContents: string, path: string, chunks: UpdateChunk[]): string {
-  const originalLines = originalContents.split('\n')
-  if (originalLines[originalLines.length - 1] === '') originalLines.pop()
-  const replacements = computeReplacements(originalLines, path, chunks)
-  const newLines = applyReplacements(originalLines, replacements)
-  if (newLines[newLines.length - 1] !== '') newLines.push('')
-  return newLines.join('\n')
+  const lines: Array<{ text: string; ending: string }> = []
+  let start = 0
+  let preferredEnding: string | undefined
+  for (const match of originalContents.matchAll(/\r\n|\r|\n/g)) {
+    const ending = match[0]
+    preferredEnding ??= ending
+    lines.push({ text: originalContents.slice(start, match.index), ending })
+    start = match.index + ending.length
+  }
+  preferredEnding ??= '\n'
+  if (start < originalContents.length) lines.push({ text: originalContents.slice(start), ending: '' })
+  const replacements = computeReplacements(lines.map(line => line.text), path, chunks)
+  const result: typeof lines = []
+  let cursor = 0
+  for (const [index, oldLen, newLines] of replacements) {
+    result.push(...lines.slice(cursor, index))
+    result.push(...newLines.map(text => ({ text, ending: preferredEnding })))
+    cursor = index + oldLen
+  }
+  result.push(...lines.slice(cursor))
+  return result.map(line => line.text + (line.ending || preferredEnding)).join('')
 }
 
 /** Quote a path for single-quoted shell use. */
@@ -211,13 +239,8 @@ export async function applyHunks(
     if (hunk.kind === 'add') {
       const target = await resolveTarget(hunk.path)
       const info = await fs.stat(target, signal)
-      if (info !== undefined) {
-        caps.observe(target, { kind: 'present', version: info.version })
-        throw new ApplyError(
-          `Cannot add file ${target.displayPath}: it already exists. Use *** Update File: to modify existing files.`,
-        )
-      }
-      caps.observe(target, { kind: 'absent' })
+      if (info !== undefined) caps.observe(target, { kind: 'present', version: info.version })
+      else caps.observe(target, { kind: 'absent' })
       const intent = await caps.writeIntent(target)
       let outcome
       try {

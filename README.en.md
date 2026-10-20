@@ -18,20 +18,14 @@ GPT-family models were trained heavily on OpenAI Codex's `apply_patch` tool, so 
 
 Install into a profile (default `web`) with the `dsh plugin` command:
 
-### From npm
-
-```bash
-dsh plugin --profile web add @fonlan/dsh-apply-patch
-```
-
 ### From GitHub
 
 ```bash
 # default branch (the repo ships a prepare build script; pnpm builds it)
-dsh plugin --profile web add github:fonlan/dsh-apply-patch
+dsh plugin --profile web add github:miaobuao/dsh-apply-patch
 
 # specific release tag
-dsh plugin --profile web add github:fonlan/dsh-apply-patch#v0.1.0
+dsh plugin --profile web add github:miaobuao/dsh-apply-patch#main
 ```
 
 ### Local source link (development)
@@ -109,4 +103,35 @@ pnpm test         # unit (parser/applier) + integration (real cordis + sandboxed
 
 ## License
 
-MIT
+This is a fork of [fonlan/dsh-apply-patch](https://github.com/fonlan/dsh-apply-patch),
+modified by miaobuao on 2026-10-20 and distributed as a whole under
+**GPL-3.0-or-later**. See [LICENSE](LICENSE) for GPLv3; you may use version 3
+or, at your option, any later version.
+
+The upstream copyright, `Copyright (c) 2026 fonlan`, and complete MIT notice
+are retained in [LICENSES/MIT.txt](LICENSES/MIT.txt). The upstream MIT grant
+remains valid for the original material. Apache-2.0 terms for Codex-derived
+adaptations and test fixtures are in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
+See [NOTICE](NOTICE) for attribution.
+
+Install this fork from the GitHub URL above. The npm package
+`@fonlan/dsh-apply-patch` belongs to upstream and does not represent this fork.
+Distributions of built packages must include access to corresponding source
+and build files for the same version.
+
+## Codex compatibility
+
+Patch parsing and application target openai/codex commit
+`014489466a1739c2c563cdfe57880c2c7c8680e3`, with 25 upstream scenario fixtures.
+Add may overwrite existing files. Matching includes Unicode punctuation fallback;
+updates preserve source context and LF/CRLF/CR endings, and new lines use the
+first source ending. Pure additions append after all source lines. EOF matching
+never searches backwards. Move headers must precede chunks; a new chunk after
+EOF requires `@@`. Bare blank lines after Add/Delete are invalid; inside Update
+they are context lines.
+
+The DSH adapter retains JSON `{ patch: string }`, sandboxed filesystem writes and
+shell deletion. Codex freeform transport, streaming diff events, execution delta
+tracking and environment routing are not provided. Environment IDs are currently
+syntax-checked only; execution uses the DSH session directory. Patches are
+sequential and do not roll back prior writes on failure.

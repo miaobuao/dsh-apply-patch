@@ -1,4 +1,10 @@
 /**
+ * Original work: Copyright (c) 2026 fonlan (MIT; see LICENSES/MIT.txt).
+ * Modifications: Copyright (c) 2026 miaobuao.
+ * Modified 2026-10-20: Codex compatibility and regression coverage.
+ * This fork is distributed under GPL-3.0-or-later; see LICENSE and NOTICE.
+ */
+/**
  * Integration test: boot a real cordis context with the real DSH services
  * (tools registry, system-prompt assembly, settings, sandbox-policy,
  * sandboxed filesystem, observation policy) plus this plugin's apply, then
@@ -202,6 +208,10 @@ describe('end-to-end patch application (sandboxed fs)', () => {
       '*** End Patch',
     ].join('\n'))
     assert.match(addOut, /Success\. Updated the following files:\nA .*new\.py/)
+
+    // Codex Add File overwrites existing content through the same sandbox seam.
+    await run('*** Begin Patch\n*** Add File: new.py\n+overwritten\n*** End Patch')
+    assert.equal(await ctx.fs.readText(await ctx.fs.resolve('new.py', { cwd: workspace })), 'overwritten\n')
 
     // Update hello.py.
     const updOut = await run([

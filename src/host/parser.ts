@@ -1,4 +1,10 @@
 /**
+ * Original work: Copyright (c) 2026 fonlan (MIT; see LICENSES/MIT.txt).
+ * Modifications: Copyright (c) 2026 miaobuao.
+ * Modified 2026-10-20: Codex compatibility and regression coverage.
+ * This fork is distributed under GPL-3.0-or-later; see LICENSE and NOTICE.
+ */
+/**
  * Codex-format apply_patch parser.
  *
  * Faithful port of the grammar implemented by openai/codex's apply-patch
@@ -46,6 +52,8 @@ export type PatchHunk =
 
 /** One contiguous replacement block inside an update hunk. */
 export interface UpdateChunk {
+  /** Source/target indices of context lines, retained verbatim during updates. */
+  contextLineIndices?: Array<[number, number]>
   /** Context line (`@@ <text>` / bare `@@`) that anchors the block; null = no anchor. */
   changeContext: string | null
   /** Lines to find and remove (without the `-` marker); empty = pure insertion. */
@@ -100,8 +108,8 @@ function checkPatchBoundariesLenient(lines: string[]): string[] {
   try {
     return checkPatchBoundariesStrict(lines)
   } catch (originalError) {
-    const first = lines[0]?.trim()
-    const last = lines[lines.length - 1]?.trimEnd()
+    const first = lines[0]?.replace(/\r$/, '')
+    const last = lines[lines.length - 1]?.replace(/\r$/, '')
     if (
       (first === '<<EOF' || first === "<<'EOF'" || first === '<<"EOF"') &&
       last?.endsWith('EOF') &&
@@ -149,6 +157,8 @@ function parseHunks(body: string): PatchHunk[] {
       newLines: [],
       isEndOfFile: false,
     }
+    // Internal matching metadata preserves context bytes without changing the public JSON shape.
+    Object.defineProperty(chunk, 'contextLineIndices', { value: [], enumerable: false })
     currentChunk = chunk
     return chunk
   }
@@ -166,12 +176,12 @@ function parseHunks(body: string): PatchHunk[] {
     // an update hunk is a literal context line, as in Codex's parser.
     const canBeHeader = current?.kind !== 'update' || raw === raw.trimStart()
 
-    if (canBeHeader && (trimmed === BEGIN_PATCH_MARKER || trimmed === END_PATCH_MARKER)) continue
-    // Blank separators outside update hunks carry no patch data. This also
-    // accepts the common blank line between an Add/Delete body and End Patch.
-    if (current?.kind !== 'update' && trimmed === '') continue
-
-    if (canBeHeader && current === null && trimmed.startsWith('*** Environment ID:')) {
+    if (i === 0 && trimmed === BEGIN_PATCH_MARKER) continue
+    if (trimmed === END_PATCH_MARKER && (canBeHeader || i === lines.length - 1)) {
+      if (lines.slice(i + 1).some(line => line.trim() !== '')) throw new PatchParseError('Unexpected content after End Patch')
+      break
+    }
+    if (canBeHeader && current === null && trimmed.startsWith('*** Environment ID: ')) {
       if (sawEnvironmentId) {
         throw new PatchParseError('apply_patch environment_id cannot be specified more than once')
       }
@@ -184,7 +194,7 @@ function parseHunks(body: string): PatchHunk[] {
 
     if (canBeHeader && trimmed.startsWith(ADD_FILE_MARKER)) {
       closeChunk()
-      const path = trimmed.slice(ADD_FILE_MARKER.length).trim()
+      const path = trimmed.slice(ADD_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Add File`)
       }
@@ -196,7 +206,7 @@ function parseHunks(body: string): PatchHunk[] {
 
     if (canBeHeader && trimmed.startsWith(DELETE_FILE_MARKER)) {
       closeChunk()
-      const path = trimmed.slice(DELETE_FILE_MARKER.length).trim()
+      const path = trimmed.slice(DELETE_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Delete File`)
       }
@@ -208,7 +218,7 @@ function parseHunks(body: string): PatchHunk[] {
 
     if (canBeHeader && trimmed.startsWith(UPDATE_FILE_MARKER)) {
       closeChunk()
-      const path = trimmed.slice(UPDATE_FILE_MARKER.length).trim()
+      const path = trimmed.slice(UPDATE_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Update File`)
       }
@@ -219,7 +229,6 @@ function parseHunks(body: string): PatchHunk[] {
     }
 
     if (current === null) {
-      if (trimmed === '') continue
       throw new PatchParseError(`Invalid patch: content before any file hunk on line ${i + 1}`)
     }
 
@@ -228,12 +237,22 @@ function parseHunks(body: string): PatchHunk[] {
       // +/-/space lines, while markers and @@ labels follow Codex's trim_end
       // treatment so marker whitespace remains lenient.
       const updateLine = raw.trimEnd()
+      const previousChunk = activeChunk()
+      if (previousChunk?.isEndOfFile) {
+        if (updateLine === '') continue
+        if (updateLine !== EMPTY_CHANGE_CONTEXT_MARKER && !updateLine.startsWith(CHANGE_CONTEXT_MARKER)) {
+          throw new PatchParseError(`Invalid hunk on line ${i + 1}: expected @@ after End of File`)
+        }
+      }
       if (updateLine.startsWith(MOVE_TO_MARKER)) {
+        if (activeChunk() !== null || current.chunks.length > 0) {
+          throw new PatchParseError(`Invalid hunk on line ${i + 1}: Move to must precede chunks`)
+        }
         closeChunk()
         if (current.movePath !== null) {
           throw new PatchParseError(`Invalid hunk on line ${i + 1}: duplicate Move to`)
         }
-        const movePath = updateLine.slice(MOVE_TO_MARKER.length).trim()
+        const movePath = updateLine.slice(MOVE_TO_MARKER.length)
         if (movePath === '') {
           throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Move to`)
         }
@@ -243,10 +262,10 @@ function parseHunks(body: string): PatchHunk[] {
 
       if (updateLine === EOF_MARKER) {
         const chunk = activeChunk()
-        if (chunk === null || (chunk.oldLines.length === 0 && chunk.newLines.length === 0)) {
+        if (chunk !== null && chunk.oldLines.length === 0 && chunk.newLines.length === 0) {
           throw new PatchParseError(`Invalid hunk on line ${i + 1}: End of File without a chunk`)
         }
-        chunk.isEndOfFile = true
+        if (chunk !== null) chunk.isEndOfFile = true
         continue
       }
 
@@ -260,13 +279,8 @@ function parseHunks(body: string): PatchHunk[] {
       }
 
       if (raw === '') {
-        // `parsePatch()` trims the outer document, so an empty line immediately
-        // before End Patch is only a separator. Elsewhere Codex treats it as
-        // empty context; after an EOF marker it is ignored.
-        const nextNonEmpty = lines.slice(i + 1).find((candidate) => candidate.trim() !== '')?.trim()
-        const chunk = activeChunk()
-        if (chunk?.isEndOfFile || nextNonEmpty === END_PATCH_MARKER) continue
-        const targetChunk = chunk ?? startUpdateChunk(null)
+        const targetChunk = activeChunk() ?? startUpdateChunk(null)
+        targetChunk.contextLineIndices!.push([targetChunk.oldLines.length, targetChunk.newLines.length])
         targetChunk.oldLines.push('')
         targetChunk.newLines.push('')
         continue
@@ -277,6 +291,7 @@ function parseHunks(body: string): PatchHunk[] {
       if (marker === '+' || marker === '-' || marker === ' ') {
         // Codex allows the first chunk to start without an explicit @@ header.
         const chunk = activeChunk() ?? startUpdateChunk(null)
+        if (marker === ' ') chunk.contextLineIndices!.push([chunk.oldLines.length, chunk.newLines.length])
         if (marker === '+' || marker === ' ') chunk.newLines.push(content)
         if (marker === '-' || marker === ' ') chunk.oldLines.push(content)
         continue
