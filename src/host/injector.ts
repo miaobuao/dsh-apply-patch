@@ -2,10 +2,18 @@
  * Built-in tool suppression.
  *
  * `apply_patch` is always registered by this plugin; the settings only decide
- * which BUILT-IN file-editing tools the model should stop seeing. The tool list
- * is assembled per agent step through the `system-prompt/assemble` waterfall,
- * so filtering the assembled list is enough: a hidden tool is neither offered
- * to the model nor callable by it in that step.
+ * which BUILT-IN file-editing tools the model should stop seeing. Suppression
+ * has two halves, because hiding a tool and preventing a call are separate
+ * operations in the host:
+ *
+ *   - Advertisement: the tool list is assembled per agent step through the
+ *     `system-prompt/assemble` waterfall, so filtering the assembled list hides
+ *     the tool from the model.
+ *   - Execution: the agent loop resolves a call by NAME through the tool
+ *     registry, which still holds the built-in definition even when it is not
+ *     advertised. A monotonic `tools.guard` therefore denies a call that names
+ *     a hidden tool, so a model that emits the name anyway (the system prompt
+ *     still mentions `read` / `edit` / `write`) cannot execute it.
  *
  * Both hidden names belong to `@deepseek-ai/dsh-tool-fs`; the settings page
  * exposes one switch per tool, and the values are read from the live config
@@ -43,6 +51,11 @@ export function suppressedTools(flags: SuppressionFlags): Set<string> {
 /** Read the current suppression set (called once per assembly). */
 export type SuppressionReader = () => Set<string>
 
+/** The `tools.guard` face this hook needs; absent on hosts that predate it. */
+interface ToolsGuardFace {
+  guard?: (guard: (execution: { readonly name: string }) => string | undefined) => () => void
+}
+
 /**
  * Install the assembly hook. Returns the disposer.
  *
@@ -53,6 +66,32 @@ export function installToolSuppressor(ctx: Context, readSuppressed: SuppressionR
   return ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
     return withoutTools(await next(), readSuppressed())
   })
+}
+
+/**
+ * Denial reason for a direct call to a suppressed built-in tool.
+ * @param hidden - current suppression set.
+ * @param name - tool name the model called.
+ * @returns the denial reason, or undefined when the tool is not suppressed.
+ */
+export function suppressedToolDenial(hidden: Set<string>, name: string): string | undefined {
+  if (!hidden.has(name)) return undefined
+  return `tool "${name}" is hidden by dsh-apply-patch; use apply_patch instead`
+}
+
+/**
+ * Install the execution guard that denies suppressed tools. Returns the disposer.
+ *
+ * The assembly filter only changes what the model is OFFERED; the agent loop
+ * resolves a call by name through the tool registry, so a hidden `edit` /
+ * `write` call would still execute. The monotonic guard runs after the
+ * extensible pre-execute policy and before the tool body, closing that gap.
+ * Hosts without `tools.guard` keep the advertisement-only behaviour.
+ */
+export function installToolGuard(ctx: Context, readSuppressed: SuppressionReader): () => void {
+  const tools = ctx.tools as unknown as ToolsGuardFace
+  if (typeof tools.guard !== 'function') return () => {}
+  return tools.guard((execution) => suppressedToolDenial(readSuppressed(), execution.name))
 }
 
 /** Drop named tools from one assembly (exported for tests). */

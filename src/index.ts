@@ -25,6 +25,7 @@ import {
 } from './host/settings-schema.js'
 import { registerApplyPatchTool, type ToolFaces } from './host/tool.js'
 import {
+  installToolGuard,
   installToolSuppressor,
   suppressedTools,
   type SuppressionFlags,
@@ -129,13 +130,16 @@ export function apply(ctx: Context, config: ResolvedApplyPatchSettings): void {
   }
   const disposeTool = registerApplyPatchTool(ctx, faces)
 
-  // 4. Hide the built-in file-editing tools the settings ask to replace.
+  // 4. Hide the built-in file-editing tools the settings ask to replace: drop
+  //    them from every assembled tool list AND deny calls that name them.
   const disposeSuppressor = installToolSuppressor(ctx, readSuppressedTools)
+  const disposeGuard = installToolGuard(ctx, readSuppressedTools)
 
   ctx.effect(() => {
     return () => {
       disposeTool()
       disposeSuppressor()
+      disposeGuard()
     }
   }, 'dsh-apply-patch: teardown')
 }

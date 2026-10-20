@@ -27,7 +27,7 @@ import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
 import { LocalSubprocessRuntime } from '@deepseek-ai/dsh-subprocess-local'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import { apply as applyObservationPolicy } from '@deepseek-ai/dsh-fs-observation-policy'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { apply as applyPlugin, readSuppressed } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
@@ -175,6 +175,55 @@ describe('built-in tool suppression', () => {
     const ctx = await boot(workspace, 'workspace-write', { disableEdit: true, disableWrite: false })
     assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read', 'write'])
     assert.deepEqual([...SUPPRESSIBLE_TOOLS], ['edit', 'write'])
+  })
+
+  /** Register a stub built-in editing tool so a call has a body to deny or run. */
+  function registerStubTool(ctx: Context, name: string): void {
+    ctx.tools.register(defineTool({
+      name,
+      description: `stub ${name} tool`,
+      parameters: {},
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute() {
+        return `${name} executed`
+      },
+    }))
+  }
+
+  /** Call a tool through the registry's public execution path (guards included). */
+  async function callTool(ctx: Context, name: string): Promise<{ text: string; isError: boolean }> {
+    const result = await ctx.tools.execute({
+      callId: `${name}-call`,
+      name,
+      arguments: {},
+      signal: new AbortController().signal,
+    } as never)
+    return {
+      text: result.content.map((block) => block.type === 'text' ? block.text : '').join(''),
+      isError: result.isError,
+    }
+  }
+
+  it('denies execution when the model names a hidden tool directly', async () => {
+    // The assembly filter hides `edit` from the model's tool list, but the
+    // registry still holds the definition: the host resolves a call by name, so
+    // without the execution guard a model that emits `edit` anyway would run it.
+    const ctx = await boot(workspace, 'workspace-write', {})
+    registerStubTool(ctx, 'edit')
+    const denied = await callTool(ctx, 'edit')
+    assert.equal(denied.isError, true)
+    assert.match(denied.text, /hidden by dsh-apply-patch/)
+  })
+
+  it('runs the built-in tool again when its switch is off', async () => {
+    const ctx = await boot(workspace, 'workspace-write', { disableEdit: false, disableWrite: false })
+    registerStubTool(ctx, 'edit')
+    const allowed = await callTool(ctx, 'edit')
+    assert.equal(allowed.isError, false)
+    assert.match(allowed.text, /edit executed/)
   })
 })
 
