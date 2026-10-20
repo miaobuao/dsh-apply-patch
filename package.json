@@ -45,15 +45,14 @@
     "tsconfig.json",
     "tsconfig.build.json",
     "tsconfig.client.json",
-    "tsdown.config.ts",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml"
+    "tsconfig.client-types.json",
+    "tsdown.config.ts"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "rm -rf lib && tsc -p tsconfig.build.json && tsdown",
+    "build": "rm -rf lib && tsc -p tsconfig.build.json && tsc -p tsconfig.client-types.json && tsdown",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "watch": "tsdown --watch",
