@@ -14,3 +14,10 @@ export const BUILTIN_WRITE_TOOL = 'write'
 /** Installing the plugin replaces the built-in file-editing tools by default. */
 export const DEFAULT_DISABLE_EDIT = true
 export const DEFAULT_DISABLE_WRITE = true
+
+/**
+ * Codex compatibility: Add/Move may replace a file that exists but was never
+ * read, and Delete may remove one. Turning this off makes those operations go
+ * through the observation policy's read-before-write guard.
+ */
+export const DEFAULT_ALLOW_UNOBSERVED_OVERWRITE = true

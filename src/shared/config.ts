@@ -12,6 +12,7 @@ import {
   APPLY_PATCH_SETTINGS_NS,
   BUILTIN_EDIT_TOOL,
   BUILTIN_WRITE_TOOL,
+  DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
   DEFAULT_DISABLE_EDIT,
   DEFAULT_DISABLE_WRITE,
 } from './constants.js'
@@ -20,6 +21,7 @@ export {
   APPLY_PATCH_SETTINGS_NS,
   BUILTIN_EDIT_TOOL,
   BUILTIN_WRITE_TOOL,
+  DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
   DEFAULT_DISABLE_EDIT,
   DEFAULT_DISABLE_WRITE,
 }
@@ -30,4 +32,9 @@ export interface ApplyPatchSettings {
   disableEdit?: boolean | null
   /** Hide the built-in `write` tool (whole-file creation/overwrite). */
   disableWrite?: boolean | null
+  /**
+   * Allow Add/Move to overwrite a file the model never read, and Delete to
+   * remove one (Codex semantics, default). Disable to require a prior read.
+   */
+  allowUnobservedOverwrite?: boolean | null
 }

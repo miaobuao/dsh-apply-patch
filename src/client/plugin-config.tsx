@@ -14,7 +14,11 @@ import type { Context } from '@deepseek-ai/cordis'
 type ClientContext = Context
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
-import { DEFAULT_DISABLE_EDIT, DEFAULT_DISABLE_WRITE } from '../shared/constants'
+import {
+  DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
+  DEFAULT_DISABLE_EDIT,
+  DEFAULT_DISABLE_WRITE,
+} from '../shared/constants'
 import { LOCALE_NS } from './locales'
 import './plugin-config.css'
 
@@ -27,6 +31,7 @@ export type ConfigFormOp =
 export interface ApplyPatchConfigValue {
   disableEdit?: boolean
   disableWrite?: boolean
+  allowUnobservedOverwrite?: boolean
 }
 
 /** Snapshot of one bound client config form. */
@@ -91,8 +96,12 @@ export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConf
 
     const disableEdit = snapshot.value?.disableEdit ?? DEFAULT_DISABLE_EDIT
     const disableWrite = snapshot.value?.disableWrite ?? DEFAULT_DISABLE_WRITE
+    const allowUnobservedOverwrite = snapshot.value?.allowUnobservedOverwrite ?? DEFAULT_ALLOW_UNOBSERVED_OVERWRITE
 
-    const change = useCallback(async (field: 'disableEdit' | 'disableWrite', next: boolean) => {
+    const change = useCallback(async (
+      field: 'disableEdit' | 'disableWrite' | 'allowUnobservedOverwrite',
+      next: boolean,
+    ) => {
       setBusy(true)
       setError(null)
       setSaved(false)
@@ -150,6 +159,18 @@ export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConf
               />
             </label>
             <p className="ap-toggle-hint">{t('disableWriteHint')}</p>
+          </div>
+          <div className="ap-toggle-field">
+            <label className="ap-toggle-row">
+              <span className="ap-toggle-label">{t('allowUnobservedOverwriteLabel')}</span>
+              <Switch
+                checked={allowUnobservedOverwrite}
+                label={t('allowUnobservedOverwriteLabel')}
+                disabled={busy || !writable}
+                onChange={(next) => void change('allowUnobservedOverwrite', next)}
+              />
+            </label>
+            <p className="ap-toggle-hint">{t('allowUnobservedOverwriteHint')}</p>
           </div>
           {busy && <p className="ap-config-status" role="status">{t('saving')}</p>}
           {!busy && saved && error === null && <p className="ap-config-status ap-config-status-ok" role="status">{t('saved')}</p>}

@@ -18,7 +18,7 @@ import type { FileSystem, FsTarget, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import { parsePatch, PatchParseError } from './parser.js'
+import { parsePatch } from './parser.js'
 import { applyHunks, renderSummary, type ApplyPatchCapabilities } from './applier.js'
 
 /** Model-facing description (codex-style, terse and unambiguous). */
@@ -52,8 +52,13 @@ export const APPLY_PATCH_DESCRIPTION = [
 /** Capability faces the tool needs from the host composition. */
 export interface ToolFaces {
   fs: FileSystem
-  /** Sandboxed shell; absent when the deployment mounts none (Delete then errors). */
-  shell: ShellExecutor | undefined
+  /**
+   * Sandboxed shell, resolved per execution; absent when the deployment mounts
+   * none (Delete then errors). Resolved lazily so a later-mounted shell is seen.
+   */
+  resolveShell(): ShellExecutor | undefined
+  /** Whether Add/Move/Delete may touch a target the model never read. */
+  resolveAllowUnobservedOverwrite(): boolean
   /** Resolve the per-session sandbox policy for one execution. */
   resolvePolicy(exec: ToolExecution): SandboxExecutionPolicy | undefined
   /** Session workspace cwd (relative hunk paths resolve against it). */
@@ -84,13 +89,7 @@ export function registerApplyPatchTool(
       if (typeof patch !== 'string' || patch.trim().length === 0) {
         throw new Error('apply_patch: the `patch` argument must be a non-empty string')
       }
-      let hunks
-      try {
-        hunks = parsePatch(patch)
-      } catch (error) {
-        if (error instanceof PatchParseError) throw error
-        throw error
-      }
+      const hunks = parsePatch(patch)
 
       const policy = faces.resolvePolicy(exec)
       const cwd = faces.resolveCwd(exec)
@@ -102,7 +101,7 @@ export function registerApplyPatchTool(
 
       const capabilities: ApplyPatchCapabilities = {
         fs: faces.fs,
-        shell: faces.shell,
+        shell: faces.resolveShell(),
         observe: (target, observation) => {
           ctx.emit('fs/observed', target, observation, exec)
         },
@@ -116,6 +115,7 @@ export function registerApplyPatchTool(
         capabilities,
         policy,
         exec.signal,
+        { allowUnobservedOverwrite: faces.resolveAllowUnobservedOverwrite() },
       )
       return renderSummary(affected)
     },

@@ -21,6 +21,7 @@
  */
 import z from '@deepseek-ai/schemastery'
 import {
+  DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
   DEFAULT_DISABLE_EDIT,
   DEFAULT_DISABLE_WRITE,
 } from '../shared/config.js'
@@ -40,6 +41,7 @@ export interface LiveSettingsField<T> {
 export type ResolvedApplyPatchSettings = {
   disableEdit: LiveSettingsField<boolean>
   disableWrite: LiveSettingsField<boolean>
+  allowUnobservedOverwrite: LiveSettingsField<boolean>
 }
 
 /**
@@ -54,7 +56,11 @@ export type ResolvedApplyPatchSettings = {
  * what this object schema is — on every supported version.
  */
 export type ApplyPatchSettingsSchemaType = z<
-  { disableEdit?: boolean | null; disableWrite?: boolean | null },
+  {
+    disableEdit?: boolean | null
+    disableWrite?: boolean | null
+    allowUnobservedOverwrite?: boolean | null
+  },
   ResolvedApplyPatchSettings
 >
 
@@ -64,4 +70,5 @@ export const ApplyPatchSettingsSchema: ApplyPatchSettingsSchemaType = z.object({
   // volatile-marked fields, so a page toggle reaches this entry live.
   disableEdit: z.boolean().default(DEFAULT_DISABLE_EDIT).volatile(),
   disableWrite: z.boolean().default(DEFAULT_DISABLE_WRITE).volatile(),
+  allowUnobservedOverwrite: z.boolean().default(DEFAULT_ALLOW_UNOBSERVED_OVERWRITE).volatile(),
 })

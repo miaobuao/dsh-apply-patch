@@ -229,7 +229,11 @@ describe('built-in tool suppression', () => {
 
 describe('end-to-end patch application (sandboxed fs)', () => {
   it('adds, updates, and deletes files through the sandbox seam', async () => {
-    const ctx = await boot(workspace, 'workspace-write', {})
+    // `danger-full-access` keeps the delete step portable: the shell seam
+    // refuses `workspace-write` on hosts without a usable OS sandbox backend
+    // (e.g. macOS where sandbox-exec is not permitted). Confinement itself is
+    // covered by the read-only and outside-workspace denial tests below.
+    const ctx = await boot(workspace, 'danger-full-access', {})
     // Prepare via the SANDBOXED fs (not node fs) to stay faithful.
     const target = await ctx.fs.resolve('hello.py', { cwd: workspace })
     const info = await ctx.fs.stat(target)

@@ -28,8 +28,12 @@
  *   eof_line: "*** End of File" LF
  *
  * Lenient mode additionally unwraps a bash heredoc wrapper
- * (`<<EOF` / `<<'EOF'` / `<<"EOF"` … `EOF`) that gpt-4.1-era models sometimes
+ * (`<<EOF` / `<<'EOF'` / `<<\"EOF\"` … `EOF`) that gpt-4.1-era models sometimes
  * emit, and tolerates leading/trailing whitespace around markers.
+ *
+ * Performance note: the patch is split into lines exactly once; the framing
+ * check and the hunk parser operate on the same array, and Add File bodies are
+ * buffered as lines and joined once instead of being appended line by line.
  */
 
 /** Begin-patch marker, first line of every patch. */
@@ -78,9 +82,10 @@ export class PatchParseError extends Error {
  * parsing.
  */
 export function parsePatch(patch: string): PatchHunk[] {
+  // `trim()` mirrors codex; the resulting array is reused for both framing and
+  // hunk parsing (the old implementation joined and re-split it).
   const lines = patch.trim().split('\n')
-  const patchLines = checkPatchBoundariesLenient(lines)
-  return parseHunks(patchLines.join('\n'))
+  return parseHunks(checkPatchBoundariesLenient(lines))
 }
 
 /** Validate `*** Begin Patch` / `*** End Patch` framing (codex strict check). */
@@ -132,13 +137,20 @@ function checkPatchBoundariesLenient(lines: string[]): string[] {
  * line starts a new file hunk; `+`/`-`/` `/`@@` lines accumulate into the
  * current update hunk's chunks; `*** End of File` flags the current chunk.
  */
-function parseHunks(body: string): PatchHunk[] {
-  const lines = body.split('\n')
+function parseHunks(lines: string[]): PatchHunk[] {
   const hunks: PatchHunk[] = []
   let current: PatchHunk | null = null
   let currentChunk: UpdateChunk | null = null
+  let addLines: string[] | null = null
   let seenAnyHunk = false
   let sawEnvironmentId = false
+
+  const finishAdd = () => {
+    if (current?.kind === 'add' && addLines !== null) {
+      current.contents = addLines.length === 0 ? '' : `${addLines.join('\n')}\n`
+      addLines = null
+    }
+  }
 
   const closeChunk = () => {
     if (currentChunk !== null) {
@@ -148,6 +160,11 @@ function parseHunks(body: string): PatchHunk[] {
       current.chunks.push(currentChunk)
       currentChunk = null
     }
+  }
+
+  const closeHunk = () => {
+    closeChunk()
+    finishAdd()
   }
 
   const startUpdateChunk = (changeContext: string | null): UpdateChunk => {
@@ -178,7 +195,10 @@ function parseHunks(body: string): PatchHunk[] {
 
     if (i === 0 && trimmed === BEGIN_PATCH_MARKER) continue
     if (trimmed === END_PATCH_MARKER && (canBeHeader || i === lines.length - 1)) {
-      if (lines.slice(i + 1).some(line => line.trim() !== '')) throw new PatchParseError('Unexpected content after End Patch')
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() !== '') throw new PatchParseError('Unexpected content after End Patch')
+      }
+      closeHunk()
       break
     }
     if (canBeHeader && current === null && trimmed.startsWith('*** Environment ID: ')) {
@@ -193,19 +213,20 @@ function parseHunks(body: string): PatchHunk[] {
     }
 
     if (canBeHeader && trimmed.startsWith(ADD_FILE_MARKER)) {
-      closeChunk()
+      closeHunk()
       const path = trimmed.slice(ADD_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Add File`)
       }
       current = { kind: 'add', path, contents: '' }
       hunks.push(current)
+      addLines = []
       seenAnyHunk = true
       continue
     }
 
     if (canBeHeader && trimmed.startsWith(DELETE_FILE_MARKER)) {
-      closeChunk()
+      closeHunk()
       const path = trimmed.slice(DELETE_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Delete File`)
@@ -217,7 +238,7 @@ function parseHunks(body: string): PatchHunk[] {
     }
 
     if (canBeHeader && trimmed.startsWith(UPDATE_FILE_MARKER)) {
-      closeChunk()
+      closeHunk()
       const path = trimmed.slice(UPDATE_FILE_MARKER.length)
       if (path === '') {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: empty path for Update File`)
@@ -304,7 +325,7 @@ function parseHunks(body: string): PatchHunk[] {
       if (!raw.startsWith('+')) {
         throw new PatchParseError(`Invalid hunk on line ${i + 1}: Add File content must start with '+'`)
       }
-      current.contents += raw.slice(1) + '\n'
+      addLines!.push(raw.slice(1))
       continue
     }
 
@@ -313,7 +334,7 @@ function parseHunks(body: string): PatchHunk[] {
     }
   }
 
-  closeChunk()
+  closeHunk()
 
   if (!seenAnyHunk) {
     // Codex: an empty patch (just begin/end) is valid but applies nothing.

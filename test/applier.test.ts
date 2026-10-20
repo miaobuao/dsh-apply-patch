@@ -146,6 +146,56 @@ describe('deriveNewContents', () => {
     )
     assert.equal(out, 'no-newline!\n')
   })
+
+  it('terminates an unchanged final line without a newline before appending', () => {
+    // Regression: reconstruction slices the original by offset, so the
+    // unterminated last line must still gain the preferred ending (the prior
+    // implementation gave every output line one).
+    const out = deriveNewContents(
+      'a',
+      'x.txt',
+      [{
+        changeContext: null,
+        oldLines: [],
+        newLines: ['b'],
+        isEndOfFile: false,
+      }],
+    )
+    assert.equal(out, 'a\nb\n')
+  })
+
+  it('updates a 150k-line file without overflowing the call stack', () => {
+    // Regression: `result.push(...lines.slice(...))` threw
+    // `RangeError: Maximum call stack size exceeded` above ~120k lines.
+    const lineCount = 150_000
+    const input = `${Array.from({ length: lineCount }, (_, i) => `line ${i}`).join('\n')}\n`
+    const out = deriveNewContents(
+      input,
+      'large.txt',
+      [{
+        changeContext: null,
+        oldLines: [`line ${lineCount - 2}`],
+        newLines: ['replaced'],
+        isEndOfFile: false,
+      }],
+    )
+    const lines = out.split('\n')
+    assert.equal(lines.length, lineCount + 1)
+    assert.equal(lines[lineCount - 2], 'replaced')
+    assert.equal(lines[lineCount], '')
+  })
+
+  it('keeps multiple chunks in a large file within the same pass', () => {
+    const lineCount = 50_000
+    const input = `${Array.from({ length: lineCount }, (_, i) => `row ${i}`).join('\n')}\n`
+    const out = deriveNewContents(input, 'large.txt', [
+      { changeContext: null, oldLines: ['row 10'], newLines: ['TEN'], isEndOfFile: false },
+      { changeContext: null, oldLines: ['row 49990'], newLines: ['LAST'], isEndOfFile: false },
+    ])
+    const lines = out.split('\n')
+    assert.equal(lines[10], 'TEN')
+    assert.equal(lines[49990], 'LAST')
+  })
 })
 
 describe('shellQuote', () => {
