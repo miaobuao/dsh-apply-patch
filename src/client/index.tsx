@@ -1,8 +1,9 @@
 /**
  * dsh-apply-patch client half: the plugin's configuration section in the
- * Plugins center (设置 -> 插件 -> dsh-apply-patch), one switch per built-in
- * file-editing tool. The host half always offers `apply_patch`, so this page
- * owns no enable/disable switch and does not add a settings-sidebar entry.
+ * Plugins center (设置 -> 插件 -> dsh-apply-patch) — one suppression switch per
+ * built-in file-editing tool plus the unread-overwrite policy switch. The host
+ * half always offers `apply_patch`, so this page owns no enable/disable switch
+ * and does not add a settings-sidebar entry.
  */
 import type { Context } from '@deepseek-ai/cordis'
 type ClientContext = Context

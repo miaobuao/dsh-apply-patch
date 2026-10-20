@@ -507,6 +507,10 @@ async function deleteViaShell(
   policy: SandboxExecutionPolicy | undefined,
   signal: AbortSignal,
 ): Promise<void> {
+  // One shell run per file is deliberate: a batched `rm -- a b ...` would lose
+  // the per-file outcome and change failure ordering (the shell stops at a
+  // different point than sequential hunks do). Batching becomes worthwhile
+  // only when the upstream FileSystem grows a remove capability.
   const shell = caps.shell
   if (shell === undefined) {
     throw new ApplyError(

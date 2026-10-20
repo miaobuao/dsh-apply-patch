@@ -34,7 +34,7 @@ export const APPLY_PATCH_TOOL_NAME = 'apply_patch'
 /** Built-in tool names this plugin may hide, in display order. */
 export const SUPPRESSIBLE_TOOLS = [BUILTIN_EDIT_TOOL, BUILTIN_WRITE_TOOL] as const
 
-/** A snapshot of the two switches, already unwrapped from their volatile cells. */
+/** A snapshot of the two suppression switches, already unwrapped from their volatile cells. */
 export interface SuppressionFlags {
   disableEdit: boolean
   disableWrite: boolean

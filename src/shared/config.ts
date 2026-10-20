@@ -1,12 +1,13 @@
 /**
  * Shared settings contract for dsh-apply-patch.
  *
- * The plugin always offers `apply_patch`; its two switches decide whether DSH's
- * built-in file-editing tools stay visible to the model. Both halves (host +
- * client) key off the same namespace, field names, and defaults, so this file
- * stays free of any schemastery import (the client bundle purity gate and the
- * client tsconfig both rely on that): the Config schema the host validates with
- * lives in `src/host/settings-schema.ts`.
+ * The plugin always offers `apply_patch`; two suppression switches decide
+ * whether DSH's built-in file-editing tools stay visible to the model, and one
+ * policy switch decides whether Add/Move/Delete may touch unread files. Both
+ * halves (host + client) key off the same namespace, field names, and defaults,
+ * so this file stays free of any schemastery import (the client bundle purity
+ * gate and the client tsconfig both rely on that): the Config schema the host
+ * validates with lives in `src/host/settings-schema.ts`.
  */
 import {
   APPLY_PATCH_SETTINGS_NS,

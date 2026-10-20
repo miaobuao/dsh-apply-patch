@@ -5,9 +5,10 @@
  * this bundle's own page in the plugin center — the same placement the official
  * web-search and agent-team pages use — instead of adding an entry to the
  * settings sidebar. Content: two switches that hide DSH's built-in `edit` and
- * `write` tools while the plugin's `apply_patch` tool stays enabled. Writes go
- * through the client `configForms` scope (the transport the built-in pages use),
- * so a flip restarts the host entry with the new switches.
+ * `write` tools while the plugin's `apply_patch` tool stays enabled, plus the
+ * `allowUnobservedOverwrite` policy switch. Writes go through the client
+ * `configForms` scope (the transport the built-in pages use), so a flip
+ * restarts the host entry with the new switches.
  */
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import type { Context } from '@deepseek-ai/cordis'

@@ -2,8 +2,8 @@
  * Locale dictionaries for the apply-patch page in the Plugins center.
  *
  * The page is a bundle configuration section (`plugins.bundle.config`): the
- * plugin itself is always enabled, so the copy explains what the two switches
- * hide rather than whether to enable anything.
+ * plugin itself is always enabled, so the copy explains what the switches do
+ * rather than whether to enable anything.
  */
 export const LOCALE_NS = 'settings.applyPatch'
 

@@ -3,8 +3,10 @@
 ## 0.0.1-alpha.1 - 2026-10-20
 
 首个版本，基于上游 `@fonlan/dsh-apply-patch@0.1.6`。本次发布的主要变更：
-`apply_patch` 改为安装即启用并以 `disableEdit` / `disableWrite` 开关替代按模型注入；
+`apply_patch` 改为安装即启用，并以 `disableEdit` / `disableWrite` 开关替代按模型注入；
 补丁解析与应用对齐 openai/codex `0144894`；项目整体改为 GPL-3.0-or-later 分发。
+本版本同时包含一轮静态分析发现的正确性、架构与性能修复（大文件更新崩溃、`Move to`
+指向自身丢文件、观察记录泄漏、覆盖策略开关等）。
 
 ### 兼容性
 
@@ -22,8 +24,8 @@
   profile 需移除旧条目后重新安装。
 - **启用与注入**：`apply_patch` 改为安装即启用，删除 `mode`（`off` / `gpt-only` /
   `all`）注入范围设置，不再按模型过滤，工具对所有模型可用。
-- **配置项与设置页**：`mode` 下拉替换为 `disableEdit` / `disableWrite` 两个开关，
-  默认均为 `true`（隐藏 DSH 内置 `edit` / `write` 工具）；设置页由设置侧栏迁移至
+- **配置项与设置页**：`mode` 下拉替换为 `disableEdit` / `disableWrite` /
+  `allowUnobservedOverwrite` 三个开关，默认均为 `true`；设置页由设置侧栏迁移至
   插件中心（设置 → 插件 → dsh-apply-patch）的插件页面，旧 `mode` 配置不再读取。
 - **许可证**：由 MIT 改为 GPL-3.0-or-later，保留上游 MIT 与 Codex Apache-2.0
   授权声明。
@@ -39,12 +41,19 @@
 
 - `disableEdit` / `disableWrite` 配置项及对应插件中心开关，可独立隐藏内置
   `edit` / `write` 工具。
+- `allowUnobservedOverwrite` 配置项（默认 `true`）：默认保持 Codex 语义，
+  `Add File` / `Move to` 可覆盖未读取的现有文件、`Delete File` 可直接删除；关闭后
+  这些操作要求模型先读取目标（经 DSH 的读后写观察策略校验）。
 - 25 个来自 openai/codex 的兼容性 fixture（`test/fixtures/codex/`，Apache-2.0），
   以及 CRLF/混合换行、Unicode 匹配、纯新增位置、EOF 约束、结构校验等回归测试。
+- 新增回归用例：15 万行文件更新、观察记录生命周期、严格覆盖模式、`Move to` 自身、
+  部分失败进度；删除路径的集成用例改用 `danger-full-access`，在没有可用 OS 沙盒
+  后端的主机上也能执行。
 - `LICENSES/MIT.txt`、`LICENSES/Apache-2.0.txt` 与 `NOTICE` 许可证/归属文件。
 - 发布流程：npm OIDC trusted publishing、预发布版本 dist-tag 自动推导
   （`0.0.1-alpha.1` → `alpha`）、发布前 typecheck 及 `--provenance`。
-- npm 包内容补充 `CHANGELOG.md`、`NOTICE`、`LICENSES/`、构建配置与 lockfile。
+- npm 包内容补充 `CHANGELOG.md`、`NOTICE`、`LICENSES/`、构建配置及客户端声明产物
+  （`lib/types/client/`，由 `tsconfig.client-types.json` 生成）。
 
 ### 变更
 
@@ -55,9 +64,28 @@
 - `apply_patch` 工具描述同步 Codex 语义（`Add File` 可覆盖、`End of File` 锚定前
   一 block）。
 - README 中英双语重写，聚焦安装、使用及许可来源。
+- `Move to` 的成功摘要报告目标路径（与 Codex 一致），此前报告源路径。
+- 多文件补丁中途失败时，错误信息保留原错误类型并列出已经生效的 `A`/`M`/`D` 路径。
+- 沙盒 shell 服务不再在插件 `apply()` 时捕获，改为每次工具执行时解析，宿主之后
+  挂载或更换 shell 也能生效。
 
 ### 修复
 
+- 大文件更新崩溃：`deriveNewContents` 过去用 `push(...lines.slice(...))` 展开
+  数组，超过约 12 万行会抛 `RangeError: Maximum call stack size exceeded`；
+  现改为按原字符串偏移切片重建，不再展开大数组。
+- `*** Move to:` 指向源文件自身时会“先写入新内容、再删除该文件”，导致文件丢失；
+  现按原地更新处理。
+- 失败补丁污染读后写状态：过去在每次写入前自行发出 `fs/observed`，失败的补丁
+  也会把文件标记为“已读”，后续工具因此可以盲写；现在只在真实读取成功（Update
+  的上下文匹配通过）、写入成功或删除成功后记录观察。
+- 沙盒拒绝映射依赖 `instanceof FsError`：`github:` 安装可能出现第二份
+  `@deepseek-ai/dsh-fs`，导致映射静默失效；现按稳定的 `error.code` 判断。
+- 删除被拒时手写的提示改为共享的 `[sandbox: ...]` 文案；删除路径同样使用
+  `sandboxDenialMarker`。
+- 替换区间缺少重叠校验（理论上会重复输出行）；现在会拒绝重叠/越界替换。
+- hunk 之间没有检查取消信号；现在每个 hunk 前检查 `signal`。
+- 丢弃 `tool.ts` 中与重抛等价的死代码 try/catch。
 - 被隐藏的内置 `edit` / `write` 工具此前只是从工具列表中移除，模型直接按名称调用
   仍会执行；现已增加执行层 `tools.guard` 拒绝此类调用。
 - `*** Add File:` 覆盖已存在文件，不再报错。
@@ -70,8 +98,20 @@
   之后的多余内容、hunk 内嵌补丁标记、空 chunk 上的 `*** End of File`；heredoc
   包裹兼容 CRLF；`*** Environment ID:` 后必须带空格。
 
+### 性能
+
+- 行匹配在精确 → rstrip → trim → Unicode 归一化的多轮搜索中，过去每个候选行都
+  重新做 `trimEnd`/`trim`/正则归一化；现按文件惰性缓存各归一化形式并在多个 hunk
+  间复用。2 万行文件、40 行失败模式的病态匹配从约 142ms 降到约 17ms。
+- 补丁只 `split` 一次（过去是 trim → split → join → split）；`Add File` 内容改为
+  行缓冲后一次 `join`。
+- 移除 `Add File` 与 `Move to` 目标上多余的 `stat`，删除/更新仍保留必要检查。
+- 工具抑制集合按配置值缓存，不再在每次系统提示组装和每次工具调用时重建 `Set`。
+
 ### 验证
 
 - `typecheck`、`build` 通过。
-- `test` 75 项中 74 项通过；删除路径的集成用例受本地环境限制（无法嵌套
-  `sandbox-exec`）未能通过，该路径已在 dsh web `0.2.1-rc.2` 运行时验证中覆盖。
+- `test` 88 项全部通过；删除路径的集成用例使用 `danger-full-access` 运行，
+  在没有可用 OS 沙盒后端（如 macOS 无法使用 `sandbox-exec`）的主机上也可执行。
+- npm 发布包不再附带 `pnpm-lock.yaml` / `pnpm-workspace.yaml`，并移除根目录遗留的
+  调试脚本 `dbg-ap.test.mts`。

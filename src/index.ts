@@ -6,9 +6,10 @@
  * the built-in file-editing tools the `dsh-apply-patch` settings namespace asks
  * to disable (`edit` / `write`, both from `@deepseek-ai/dsh-tool-fs`).
  *
- * Installing the plugin is enough to enable `apply_patch`; the only settings are
- * the two suppression switches. The Web UI exposes them on the plugin's own page
- * in the Plugins center (`plugins.bundle.config`), not in the settings sidebar.
+ * Installing the plugin is enough to enable `apply_patch`; the settings are the
+ * two suppression switches plus the overwrite policy switch. The Web UI exposes
+ * them on the plugin's own page in the Plugins center
+ * (`plugins.bundle.config`), not in the settings sidebar.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -109,7 +110,7 @@ const suppressionCache = new WeakMap<object, SuppressionCache>()
  * Accepts both the schema's resolved shape (`ResolvedApplyPatchSettings`, each
  * switch a live handle) and a hand-written plain `ApplyPatchSettings` document.
  * @param config - the entry config this host half was applied with.
- * @returns the current suppression set; empty when both switches are off.
+ * @returns the current suppression set; empty when both suppression switches are off.
  */
 export function readSuppressed(
   config: ResolvedApplyPatchSettings | ApplyPatchSettings | undefined,

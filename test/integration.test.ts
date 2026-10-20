@@ -129,6 +129,15 @@ describe('plugin apply', () => {
     assert.deepEqual([...readSuppressed({ disableEdit: false, disableWrite: false })], [])
     assert.deepEqual([...readSuppressed(undefined)], ['edit', 'write'])
     assert.deepEqual([...readSuppressed({ disableEdit: 'nonsense' } as never)], ['edit', 'write'])
+    // The memoized set must follow the live cells of one config object.
+    let edit = true
+    const live = {
+      disableEdit: { get: () => edit },
+      disableWrite: { get: () => true },
+    }
+    assert.deepEqual([...readSuppressed(live as never)], ['edit', 'write'])
+    edit = false
+    assert.deepEqual([...readSuppressed(live as never)], ['write'], 'the cache follows the live cells')
   })
 })
 

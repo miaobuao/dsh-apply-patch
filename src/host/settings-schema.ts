@@ -37,7 +37,7 @@ export interface LiveSettingsField<T> {
   get(): T
 }
 
-/** The resolved document `apply()` receives: both switches are live handles. */
+/** The resolved document `apply()` receives: every switch is a live handle. */
 export type ResolvedApplyPatchSettings = {
   disableEdit: LiveSettingsField<boolean>
   disableWrite: LiveSettingsField<boolean>
@@ -45,7 +45,7 @@ export type ResolvedApplyPatchSettings = {
 }
 
 /**
- * The schema's own type: both switches are accepted as plain booleans (nullable
+ * The schema's own type: each switch is accepted as a plain boolean (nullable
  * before their defaults apply) and resolve to live handles above. Exported
  * under a stable name so the declaration build can write it (see the module
  * note).
