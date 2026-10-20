@@ -7,7 +7,7 @@
  * `volatile()` field arrives as a live handle (`{ get() }`, cosmokit's
  * `Volatile<T>`), so `apply()` takes `ResolvedApplyPatchSettings` while
  * `ApplyPatchSettings` stays the plain shape of a hand-written document — see
- * readMode in ../index.ts, which unwraps either.
+ * readSuppressed in ../index.ts, which unwraps either.
  *
  * The schema carries an explicit annotation because this repo's node_modules
  * holds several schemastery copies: the bare inferred type resolves through a
@@ -21,9 +21,8 @@
  */
 import z from '@deepseek-ai/schemastery'
 import {
-  DEFAULT_INJECTION_MODE,
-  INJECTION_MODES,
-  type InjectionMode,
+  DEFAULT_DISABLE_EDIT,
+  DEFAULT_DISABLE_WRITE,
 } from '../shared/config.js'
 
 /**
@@ -37,15 +36,17 @@ export interface LiveSettingsField<T> {
   get(): T
 }
 
-/** The resolved document `apply()` receives: `mode` is a live handle. */
+/** The resolved document `apply()` receives: both switches are live handles. */
 export type ResolvedApplyPatchSettings = {
-  mode: LiveSettingsField<InjectionMode>
+  disableEdit: LiveSettingsField<boolean>
+  disableWrite: LiveSettingsField<boolean>
 }
 
 /**
- * The schema's own type: `mode` is accepted as a plain value (nullable before
- * its default applies) and resolved to the live handle above. Exported under a
- * stable name so the declaration build can write it (see the module note).
+ * The schema's own type: both switches are accepted as plain booleans (nullable
+ * before their defaults apply) and resolve to live handles above. Exported
+ * under a stable name so the declaration build can write it (see the module
+ * note).
  *
  * Only the first two type arguments are spelled: `Schema`'s third `Mode`
  * parameter only exists from schemastery 3.18.3 on, while the package's peer
@@ -53,19 +54,14 @@ export type ResolvedApplyPatchSettings = {
  * what this object schema is — on every supported version.
  */
 export type ApplyPatchSettingsSchemaType = z<
-  { mode?: InjectionMode | null },
+  { disableEdit?: boolean | null; disableWrite?: boolean | null },
   ResolvedApplyPatchSettings
 >
 
-/** Settings document schema: the single dropdown field. */
+/** Settings document schema: the two built-in-tool switches. */
 export const ApplyPatchSettingsSchema: ApplyPatchSettingsSchemaType = z.object({
   // Volatile: the settings plane (page / settings.replace) only writes
-  // volatile-marked fields. The modes are listed as individual `z.const`s (not
-  // a spread of INJECTION_MODES) so the schema keeps the literal union as its
-  // output type — a spread widens it. INJECTION_MODES stays the single source
-  // of truth for the values; keep both lists in step.
-  mode: z
-    .union([z.const(INJECTION_MODES[0]), z.const(INJECTION_MODES[1]), z.const(INJECTION_MODES[2])])
-    .default(DEFAULT_INJECTION_MODE)
-    .volatile(),
+  // volatile-marked fields, so a page toggle reaches this entry live.
+  disableEdit: z.boolean().default(DEFAULT_DISABLE_EDIT).volatile(),
+  disableWrite: z.boolean().default(DEFAULT_DISABLE_WRITE).volatile(),
 })

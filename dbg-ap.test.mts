@@ -2,7 +2,6 @@ import { join } from 'node:path'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
-import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import { SandboxedFileSystem } from '@deepseek-ai/dsh-fs-sandbox'
 import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
@@ -12,18 +11,7 @@ import { apply as applyObservationPolicy } from '@deepseek-ai/dsh-fs-observation
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { apply as applyPlugin } from './src/index.js'
-
-class MemorySettings extends SettingsProvider {
-  static Config = undefined as never
-  doc: Record<string, unknown>
-  readonly writable = true
-  constructor(ctx: Context, config: { doc: Record<string, unknown> }) {
-    super(ctx)
-    this.doc = config.doc
-  }
-  async load(): Promise<Record<string, unknown>> { return this.doc }
-  protected async persist(_ns, section): Promise<void> { this.doc = { ...this.doc, ...section } }
-}
+import { ApplyPatchSettingsSchema } from './src/host/settings-schema.js'
 
 const ws = mkdtempSync(join(tmpdir(), 'ap-dbg-'))
 const ctx = new Context()
@@ -34,9 +22,15 @@ await ctx.plugin(SandboxedFileSystem, { cwd: ws })
 await ctx.plugin(SandboxBashExecutor, {})
 await ctx.plugin(ToolRuntime, {})
 await ctx.plugin(SystemPrompt, {})
-await ctx.plugin(MemorySettings, { doc: { 'dsh-apply-patch': { mode: 'all' } } })
 await ctx.plugin(applyObservationPolicy)
-const fiber = await ctx.plugin({ name: 'dsh-apply-patch', inject: ['tools', 'fs', 'systemPrompt', 'settings', 'sandboxPolicy'], apply: applyPlugin })
+// Same wiring as the loader: the entry config passes through the Config schema,
+// which turns both switches into live volatile handles.
+const resolvedConfig = ApplyPatchSettingsSchema({ disableEdit: true, disableWrite: true })
+const fiber = await ctx.plugin({
+  name: 'dsh-apply-patch',
+  inject: ['tools', 'fs', 'systemPrompt', 'sandboxPolicy'],
+  apply: (pluginCtx: Context) => applyPlugin(pluginCtx, resolvedConfig as never),
+})
 console.log('plugin() returned:', typeof fiber, (fiber as any)?.constructor?.name)
 await new Promise(r => setTimeout(r, 300))
 const f = (fiber as any)?.fiber ?? fiber

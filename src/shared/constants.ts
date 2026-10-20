@@ -7,11 +7,10 @@
 /** Settings namespace of this plugin (lowercase kebab, matches package short name). */
 export const APPLY_PATCH_SETTINGS_NS = 'dsh-apply-patch'
 
-/** Injection-scope choices, in display order. */
-export const INJECTION_MODES = ['off', 'gpt-only', 'all'] as const
+/** Built-in tool names this plugin can hide; both come from @deepseek-ai/dsh-tool-fs. */
+export const BUILTIN_EDIT_TOOL = 'edit'
+export const BUILTIN_WRITE_TOOL = 'write'
 
-/** Injection-scope choice type. */
-export type InjectionMode = (typeof INJECTION_MODES)[number]
-
-/** Default: only gpt-* models see the tool; users opt into all or off explicitly. */
-export const DEFAULT_INJECTION_MODE: InjectionMode = 'gpt-only'
+/** Installing the plugin replaces the built-in file-editing tools by default. */
+export const DEFAULT_DISABLE_EDIT = true
+export const DEFAULT_DISABLE_WRITE = true

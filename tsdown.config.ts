@@ -1,11 +1,11 @@
 /**
- * tsdown build for @fonlan/dsh-apply-patch: the host-half lib (lib/index.js, ESM
+ * tsdown build for dsh-apply-patch: the host-half lib (lib/index.js, ESM
  * node) plus the browser client bundle (lib/client.js, CJS closure factory)
  * replicating the official DSH client-bundle preset
  * (packages/client/tsdown.client.ts).
  *
  * The client bundle registers via window.__ModuleLoader__.load({id, factory})
- * with the package-name id `@fonlan/dsh-apply-patch` (the client-modules compose
+ * with the package-name id `dsh-apply-patch` (the client-modules compose
  * keys on the package name; keep it in sync with package.json `name`).
  * Externals resolve through the loader module table at runtime; everything
  * else is inlined. CSS files are inlined as <style data-plugin> tags.
@@ -169,5 +169,5 @@ export default [
     dts: false,
     clean: false,
   },
-  clientBundle('@fonlan/dsh-apply-patch', 'client.js'),
+  clientBundle('dsh-apply-patch', 'client.js'),
 ] satisfies UserConfig[]

@@ -14,6 +14,12 @@ dsh plugin --profile web add github:miaobuao/dsh-apply-patch
 
 ## Usage notes
 
+- `apply_patch` is enabled as soon as the plugin is installed; no extra setting is needed.
+- The plugin's page lives in **Settings → Plugins → dsh-apply-patch** (the same
+  place as the official web-search and agent-team pages). Its two switches hide
+  the built-in `edit` (targeted text edits) and `write` (whole-file writes)
+  tools; both default to hidden, so the model starts with `apply_patch` only.
+- Turning a switch off restores the corresponding built-in tool.
 - `Add File` can overwrite existing files.
 - Multi-file patches run sequentially; a failure does not roll back earlier changes.
 - Operations use the DSH session directory. Selecting another environment through

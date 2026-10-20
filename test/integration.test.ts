@@ -9,8 +9,8 @@
  * (tools registry, system-prompt assembly, settings, sandbox-policy,
  * sandboxed filesystem, observation policy) plus this plugin's apply, then
  * verify:
- *   1. the apply_patch tool is registered,
- *   2. conditional injection honors the settings mode + model,
+ *   1. the apply_patch tool is registered unconditionally (install = enable),
+ *   2. the built-in file-editing tools are hidden according to the two switches,
  *   3. a full patch executes through the sandboxed fs seam (add/update/delete),
  *   4. sandbox denials surface as `[sandbox: ...]` errors (read-only mode).
  */
@@ -29,9 +29,9 @@ import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import { apply as applyObservationPolicy } from '@deepseek-ai/dsh-fs-observation-policy'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { apply as applyPlugin, readMode } from '../src/index.js'
+import { apply as applyPlugin, readSuppressed } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
-import { APPLY_PATCH_TOOL_NAME, shouldOfferTool } from '../src/host/injector.js'
+import { APPLY_PATCH_TOOL_NAME, SUPPRESSIBLE_TOOLS } from '../src/host/injector.js'
 
 /** Boot a composed context with the given sandbox mode + entry config. */
 async function boot(workspace: string, mode: string, entryConfig: Record<string, unknown>) {
@@ -47,9 +47,9 @@ async function boot(workspace: string, mode: string, entryConfig: Record<string,
   // so the projection registry service must exist before it activates.
   await ctx.plugin(SessionProjectionRegistry, {})
   await ctx.plugin(applyObservationPolicy)
-  // dsh >= 0.1.7 wiring: the mode rides this entry's config, resolved through
-  // the plugin's Config schema exactly as the loader does it (that resolution is
-  // what turns `mode` into a live volatile handle).
+  // dsh >= 0.1.7 wiring: the switches ride this entry's config, resolved
+  // through the plugin's Config schema exactly as the loader does it (that
+  // resolution turns each switch into a live volatile handle).
   await ctx.plugin({
     name: 'dsh-apply-patch',
     inject: ['tools', 'fs', 'systemPrompt', 'sandboxPolicy'],
@@ -102,47 +102,55 @@ after(() => {
 
 describe('plugin apply', () => {
   it('registers the apply_patch tool', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'all' })
+    // Installing the plugin is enough: the tool is registered unconditionally,
+    // and the switches only hide the built-in editing tools.
+    const ctx = await boot(workspace, 'workspace-write', {})
     const names = ctx.tools.schemas().map((t: { name: string }) => t.name)
     assert.ok(names.includes(APPLY_PATCH_TOOL_NAME), `tool registered: ${names.join(', ')}`)
-
   })
 
-  it('reads the mode out of the entry config, volatile handle included', async () => {
+  it('reads the switches out of the entry config, volatile handles included', async () => {
     // dsh >= 0.1.7 hands a `volatile()` field to apply() as a LIVE HANDLE
     // (`{ get() }`, non-enumerable, JSON `{}`), never as the value. Reading
-    // `config.mode` directly therefore collapsed every choice to the handle
-    // object and the settings dropdown had no effect ("off" / "all" both fell
-    // through to the gpt-only branch of shouldOfferTool).
-    const resolved = ApplyPatchSettingsSchema({ mode: 'all' }) as unknown as { mode: unknown }
-    assert.equal(typeof resolved.mode, 'object', 'the schema wraps the field in a cell')
+    // `config.disableEdit` directly would therefore read a truthy object for
+    // every state, so the switch could never be turned back off.
+    const resolved = ApplyPatchSettingsSchema({ disableEdit: false, disableWrite: true }) as unknown as {
+      disableEdit: unknown
+      disableWrite: unknown
+    }
+    assert.equal(typeof resolved.disableEdit, 'object', 'the schema wraps the field in a cell')
     assert.ok(
-      Symbol.for('cosmokit.volatile.write') in (resolved.mode as object),
+      Symbol.for('cosmokit.volatile.write') in (resolved.disableEdit as object),
       'the cell carries cosmokit\'s registered symbol',
     )
-    assert.equal(readMode(resolved as never), 'all', 'cell is unwrapped')
+    assert.deepEqual([...readSuppressed(resolved as never)], ['write'], 'cells are unwrapped')
     // Plain values (hand-built patches, hosts that resolve the config without
-    // the volatile wrapper) and absent/invalid values keep working.
-    assert.equal(readMode({ mode: 'off' } as never), 'off')
-    assert.equal(readMode(undefined), 'gpt-only')
-    assert.equal(readMode({ mode: 'nonsense' } as never), 'gpt-only')
+    // the volatile wrapper), defaults, and unusable values keep working.
+    assert.deepEqual([...readSuppressed({ disableEdit: false, disableWrite: false })], [])
+    assert.deepEqual([...readSuppressed(undefined)], ['edit', 'write'])
+    assert.deepEqual([...readSuppressed({ disableEdit: 'nonsense' } as never)], ['edit', 'write'])
   })
 })
 
-describe('conditional injection', () => {
+describe('built-in tool suppression', () => {
   /**
    * Drive the REAL system-prompt/assemble waterfall with a synthetic assembly.
    *
    * The composed test context mounts no prompt tool list (that wiring lives in
    * plugins this scaffold does not boot), so `systemPrompt.assemble()` returns
-   * an empty tool list and could not tell the modes apart. Emitting the
-   * waterfall with one apply_patch tool in the assembly exercises the plugin's
-   * own hook — which is what decides whether the tool survives.
+   * an empty tool list. Emitting the waterfall with the built-in editing tools
+   * plus apply_patch in the assembly exercises the plugin's own hook — which is
+   * what decides which tools the model ends up seeing.
    */
-  async function assembleTools(ctx: Context, model: string | undefined): Promise<string[]> {
+  const BUILTIN = ['edit', 'write'] as const
+
+  async function assembleTools(ctx: Context): Promise<string[]> {
     const assembly = {
-      tools: [{ name: APPLY_PATCH_TOOL_NAME }],
-      variables: model === undefined ? {} : { model },
+      tools: [
+        { name: APPLY_PATCH_TOOL_NAME },
+        { name: 'read' },
+        ...BUILTIN.map((name) => ({ name })),
+      ],
     }
     const out = await ctx.waterfall(
       'system-prompt/assemble',
@@ -153,31 +161,26 @@ describe('conditional injection', () => {
     return (out as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name)
   }
 
-  it('drops the tool when mode is off', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'off' })
-    assert.deepEqual(await assembleTools(ctx, 'gpt-4.1'), [])
+  it('hides both built-in editing tools by default', async () => {
+    const ctx = await boot(workspace, 'workspace-write', {})
+    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read'])
   })
 
-  it('keeps the tool for gpt models in gpt-only mode', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'gpt-only' })
-    assert.deepEqual(await assembleTools(ctx, 'gpt-4.1'), [APPLY_PATCH_TOOL_NAME])
-    assert.deepEqual(await assembleTools(ctx, 'deepseek-v4'), [])
-    // Pure decision stays covered too.
-    assert.equal(shouldOfferTool('gpt-only', 'gpt-4.1'), true)
-    assert.equal(shouldOfferTool('gpt-only', 'o3-mini'), false)
-    assert.equal(shouldOfferTool('gpt-only', 'deepseek-v4'), false)
+  it('keeps the built-in tools when both switches are off', async () => {
+    const ctx = await boot(workspace, 'workspace-write', { disableEdit: false, disableWrite: false })
+    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read', 'edit', 'write'])
   })
 
-  it('keeps the tool for every model in all mode', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'all' })
-    assert.deepEqual(await assembleTools(ctx, 'deepseek-v4'), [APPLY_PATCH_TOOL_NAME])
-    assert.deepEqual(await assembleTools(ctx, undefined), [APPLY_PATCH_TOOL_NAME])
+  it('suppresses each built-in tool independently', async () => {
+    const ctx = await boot(workspace, 'workspace-write', { disableEdit: true, disableWrite: false })
+    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read', 'write'])
+    assert.deepEqual([...SUPPRESSIBLE_TOOLS], ['edit', 'write'])
   })
 })
 
 describe('end-to-end patch application (sandboxed fs)', () => {
   it('adds, updates, and deletes files through the sandbox seam', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'all' })
+    const ctx = await boot(workspace, 'workspace-write', {})
     // Prepare via the SANDBOXED fs (not node fs) to stay faithful.
     const target = await ctx.fs.resolve('hello.py', { cwd: workspace })
     const info = await ctx.fs.stat(target)
@@ -239,7 +242,7 @@ describe('end-to-end patch application (sandboxed fs)', () => {
   })
 
   it('rejects a patch whose context does not match', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'all' })
+    const ctx = await boot(workspace, 'workspace-write', {})
     const tool = (ctx.tools as unknown as { get(name: string): { execute(args: unknown, exec: unknown): Promise<string> } }).get(APPLY_PATCH_TOOL_NAME)
     await assert.rejects(
       tool.execute({ patch: [
@@ -256,7 +259,7 @@ describe('end-to-end patch application (sandboxed fs)', () => {
   })
 
   it('surfaces sandbox denials as [sandbox: ...] under read-only', async () => {
-    const ctx = await boot(workspace, 'read-only', { mode: 'all' })
+    const ctx = await boot(workspace, 'read-only', {})
     const tool = (ctx.tools as unknown as { get(name: string): { execute(args: unknown, exec: unknown): Promise<string> } }).get(APPLY_PATCH_TOOL_NAME)
     await assert.rejects(
       tool.execute({ patch: [
@@ -271,7 +274,7 @@ describe('end-to-end patch application (sandboxed fs)', () => {
   })
 
   it('rejects writes outside the workspace root under workspace-write', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { mode: 'all' })
+    const ctx = await boot(workspace, 'workspace-write', {})
     const tool = (ctx.tools as unknown as { get(name: string): { execute(args: unknown, exec: unknown): Promise<string> } }).get(APPLY_PATCH_TOOL_NAME)
     await assert.rejects(
       tool.execute({ patch: [

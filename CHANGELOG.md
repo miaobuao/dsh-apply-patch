@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Breaking**: `apply_patch` is now always enabled on install; the `mode`
+  setting (`off` / `gpt-only` / `all`) is replaced by two switches,
+  `disableEdit` and `disableWrite`, which hide the built-in `edit` and `write`
+  tools (both default to hidden). The settings entry moved from the settings
+  sidebar to the plugin's own page in the Plugins center.
+
 - Distribute this fork under GPL-3.0-or-later, preserving upstream MIT and Codex Apache-2.0 notices.
 
 - Align patch parsing and application with Codex `0144894`: overwrite on Add, Unicode matching, source context and newline preservation, append placement, and EOF cursor/state constraints.

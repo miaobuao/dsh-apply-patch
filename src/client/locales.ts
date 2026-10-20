@@ -1,17 +1,19 @@
 /**
- * Locale dictionaries for the apply-patch settings page.
+ * Locale dictionaries for the apply-patch page in the Plugins center.
+ *
+ * The page is a bundle configuration section (`plugins.bundle.config`): the
+ * plugin itself is always enabled, so the copy explains what the two switches
+ * hide rather than whether to enable anything.
  */
 export const LOCALE_NS = 'settings.applyPatch'
 
 export const zh = {
-  nav: 'Apply Patch',
-  settingsTitle: 'Apply Patch 工具',
-  sectionSub: '为模型注入 codex 风格的 apply_patch 工具（通过 DSH 沙盒执行写入）',
-  modeLabel: '注入范围',
-  modeOff: '关闭',
-  modeGptOnly: '仅GPT模型',
-  modeAll: '所有模型',
-  modeHint: '关闭：完全不注入 apply_patch；仅GPT模型：只对 gpt- 开头的模型注入；所有模型：对所有模型注入。',
+  sectionTitle: '内置文件编辑工具',
+  sectionSub: 'apply_patch 已启用。这里决定是否让模型继续看到 DSH 内置的文件编辑工具。',
+  disableEditLabel: '隐藏内置 edit 工具',
+  disableEditHint: '不让模型使用定点文本编辑（edit）。apply_patch 的 Update File 可以完成同样的事。',
+  disableWriteLabel: '隐藏内置 write 工具',
+  disableWriteHint: '不让模型整文件写入（write）。apply_patch 的 Add File / Update File 可以完成同样的事。',
   saving: '保存中…',
   saved: '已保存',
   saveFailed: '保存失败：{message}',
@@ -20,17 +22,15 @@ export const zh = {
 } as const
 
 export const en = {
-  nav: 'Apply Patch',
-  settingsTitle: 'Apply Patch Tool',
-  sectionSub: 'Inject the codex-style apply_patch tool for models (writes go through the DSH sandbox)',
-  modeLabel: 'Injection scope',
-  modeOff: 'Off',
-  modeGptOnly: 'GPT models only',
-  modeAll: 'All models',
-  modeHint: 'Off: never inject apply_patch. GPT models only: inject only for models whose id starts with gpt-. All models: inject for every model.',
+  sectionTitle: 'Built-in file-editing tools',
+  sectionSub: 'apply_patch is enabled. These switches decide whether the model still sees DSH\'s built-in file-editing tools.',
+  disableEditLabel: 'Hide the built-in edit tool',
+  disableEditHint: 'Stops the model from using targeted text edits (edit). apply_patch\'s Update File does the same job.',
+  disableWriteLabel: 'Hide the built-in write tool',
+  disableWriteHint: 'Stops whole-file writes (write). apply_patch\'s Add File / Update File do the same job.',
   saving: 'Saving…',
   saved: 'Saved',
-  saveFailed: 'Failed to save: {message}',
+  saveFailed: 'Save failed: {message}',
   saveConflict: 'Configuration changed elsewhere; try again.',
   readOnly: 'This deployment is read-only; configuration cannot be changed.',
 } as const

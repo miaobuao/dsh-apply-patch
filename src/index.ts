@@ -1,20 +1,22 @@
 /**
- * @fonlan/dsh-apply-patch host half.
+ * dsh-apply-patch host half.
  *
- * Registers the codex-style `apply_patch` tool over DSH's built-in sandbox
- * (ctx.fs for Add/Update/Move writes, ctx.shell for Delete), plus the
- * `dsh-apply-patch` settings namespace whose single `mode` field controls
- * injection scope (off / gpt-only / all). The tool is only offered to the
- * model on sessions whose resolved model passes the scope check.
+ * Always registers the codex-style `apply_patch` tool over DSH's built-in
+ * sandbox (ctx.fs for Add/Update/Move writes, ctx.shell for Delete), and hides
+ * the built-in file-editing tools the `dsh-apply-patch` settings namespace asks
+ * to disable (`edit` / `write`, both from `@deepseek-ai/dsh-tool-fs`).
+ *
+ * Installing the plugin is enough to enable `apply_patch`; the only settings are
+ * the two suppression switches. The Web UI exposes them on the plugin's own page
+ * in the Plugins center (`plugins.bundle.config`), not in the settings sidebar.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import {
   APPLY_PATCH_SETTINGS_NS,
-  DEFAULT_INJECTION_MODE,
-  INJECTION_MODES,
+  DEFAULT_DISABLE_EDIT,
+  DEFAULT_DISABLE_WRITE,
   type ApplyPatchSettings,
-  type InjectionMode,
 } from './shared/config.js'
 import {
   ApplyPatchSettingsSchema,
@@ -22,9 +24,13 @@ import {
   type ResolvedApplyPatchSettings,
 } from './host/settings-schema.js'
 import { registerApplyPatchTool, type ToolFaces } from './host/tool.js'
-import { installInjector, shouldOfferTool } from './host/injector.js'
+import {
+  installToolSuppressor,
+  suppressedTools,
+  type SuppressionFlags,
+} from './host/injector.js'
 
-export const name = '@fonlan/dsh-apply-patch'
+export const name = 'dsh-apply-patch'
 
 export const inject = [
   'tools',
@@ -35,9 +41,9 @@ export const inject = [
 
 // The plugin's Config is the settings form: dsh >= 0.1.7 derives the settings
 // page from this schema, and a config change restarts the entry, so `apply`
-// always sees the current mode. Its resolved shape is
-// `ResolvedApplyPatchSettings` — `mode` arrives as a live volatile handle, not
-// as the plain value `ApplyPatchSettings` describes.
+// always sees the current switches. Its resolved shape is
+// `ResolvedApplyPatchSettings` — each switch arrives as a live volatile handle,
+// not as the plain boolean `ApplyPatchSettings` describes.
 export const Config = ApplyPatchSettingsSchema
 
 /** Session cwd helper: the agent's workspace root. */
@@ -62,39 +68,52 @@ function isVolatileCell(value: unknown): value is LiveSettingsField<unknown> {
 }
 
 /**
- * Read the injection mode from the entry config.
+ * Read one boolean switch out of the entry config.
  *
  * A `volatile()` field does NOT arrive as its value on dsh >= 0.1.7: it arrives
  * as a live cosmokit cell (`{ get() }`, `typeof === 'object'`,
- * `JSON.stringify` → `{}`). Reading `config.mode` directly therefore yielded the
- * cell, `shouldOfferTool` fell through to its gpt-only branch, and the "off" /
- * "all" choices made on the settings page (or in the profile patch) were
- * ignored. The cell is read on every call so a settings edit takes effect
- * without re-registering the tool.
- * @param config - the entry config this host half was applied with, either in
- * the schema's resolved shape (`ResolvedApplyPatchSettings`, `mode` a live
- * handle) or as a hand-written plain `ApplyPatchSettings` document.
- * @returns the current mode, or the composition default for anything unusable.
+ * `JSON.stringify` → `{}`). Reading `config.disableEdit` directly would return
+ * the cell (truthy for every state), so the cell is unwrapped here; it is read
+ * on every assembly so a settings edit takes effect without re-registering.
+ * @param field - the value the config carries for this switch.
+ * @param fallback - the composition default for an absent or unusable value.
+ * @returns the switch value.
  */
-export function readMode(
-  config: ResolvedApplyPatchSettings | ApplyPatchSettings | undefined,
-): InjectionMode {
-  const field = (config as { mode?: unknown } | undefined)?.mode
-  if (field === undefined || field === null) return DEFAULT_INJECTION_MODE
+function readSwitch(field: unknown, fallback: boolean): boolean {
+  if (field === undefined || field === null) return fallback
   const value = isVolatileCell(field) ? field.get() : field
-  return INJECTION_MODES.includes(value as InjectionMode) ? (value as InjectionMode) : DEFAULT_INJECTION_MODE
+  return typeof value === 'boolean' ? value : fallback
+}
+
+/**
+ * The built-in tool names the current entry config asks to hide.
+ *
+ * Accepts both the schema's resolved shape (`ResolvedApplyPatchSettings`, each
+ * switch a live handle) and a hand-written plain `ApplyPatchSettings` document.
+ * @param config - the entry config this host half was applied with.
+ * @returns the current suppression set; empty when both switches are off.
+ */
+export function readSuppressed(
+  config: ResolvedApplyPatchSettings | ApplyPatchSettings | undefined,
+): Set<string> {
+  const fields = config as { disableEdit?: unknown; disableWrite?: unknown } | undefined
+  const flags: SuppressionFlags = {
+    disableEdit: readSwitch(fields?.disableEdit, DEFAULT_DISABLE_EDIT),
+    disableWrite: readSwitch(fields?.disableWrite, DEFAULT_DISABLE_WRITE),
+  }
+  return suppressedTools(flags)
 }
 
 export function apply(ctx: Context, config: ResolvedApplyPatchSettings): void {
-  // 1. Injection scope comes from the entry config (settings page / patch yaml):
-  // the mode is re-read from the live volatile handle on every request.
-  const mode = () => readMode(config)
+  // 1. The switches come from the entry config (settings page / patch yaml);
+  //    they are re-read from the live volatile handles on every assembly.
+  const readSuppressedTools = () => readSuppressed(config)
 
   // 2. Optional sandboxed shell (needed only for *** Delete File:).
   const shellService = ctx.get('shell')
   const sandboxPolicyService = ctx.get('sandboxPolicy')
 
-  // 3. Register the tool. Injection scope is read live at execute time.
+  // 3. Register the tool unconditionally: installing the plugin enables it.
   const faces: ToolFaces = {
     fs: ctx.fs,
     shell: shellService as ToolFaces['shell'],
@@ -110,16 +129,16 @@ export function apply(ctx: Context, config: ResolvedApplyPatchSettings): void {
   }
   const disposeTool = registerApplyPatchTool(ctx, faces)
 
-  // 4. Conditional injection by model + settings mode.
-  const disposeInjector = installInjector(ctx, mode)
+  // 4. Hide the built-in file-editing tools the settings ask to replace.
+  const disposeSuppressor = installToolSuppressor(ctx, readSuppressedTools)
 
   ctx.effect(() => {
     return () => {
       disposeTool()
-      disposeInjector()
+      disposeSuppressor()
     }
   }, 'dsh-apply-patch: teardown')
 }
 
-export { ApplyPatchSettingsSchema, APPLY_PATCH_SETTINGS_NS, shouldOfferTool }
-export type { ApplyPatchSettings, ResolvedApplyPatchSettings, InjectionMode }
+export { ApplyPatchSettingsSchema, APPLY_PATCH_SETTINGS_NS }
+export type { ApplyPatchSettings, ResolvedApplyPatchSettings }

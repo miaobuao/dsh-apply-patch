@@ -1,28 +1,33 @@
 /**
- * Shared settings contract for @fonlan/dsh-apply-patch.
+ * Shared settings contract for dsh-apply-patch.
  *
- * One namespace, one field: `mode` — when the `apply_patch` tool is injected
- * into a session's toolset. Both halves (host + client) key off the same
- * strings, so this file stays free of any schemastery import (the client bundle
- * purity gate and the client tsconfig both rely on that): the Config schema the
- * host validates with lives in `src/host/settings-schema.ts`.
+ * The plugin always offers `apply_patch`; its two switches decide whether DSH's
+ * built-in file-editing tools stay visible to the model. Both halves (host +
+ * client) key off the same namespace, field names, and defaults, so this file
+ * stays free of any schemastery import (the client bundle purity gate and the
+ * client tsconfig both rely on that): the Config schema the host validates with
+ * lives in `src/host/settings-schema.ts`.
  */
 import {
   APPLY_PATCH_SETTINGS_NS,
-  DEFAULT_INJECTION_MODE,
-  INJECTION_MODES,
-  type InjectionMode,
+  BUILTIN_EDIT_TOOL,
+  BUILTIN_WRITE_TOOL,
+  DEFAULT_DISABLE_EDIT,
+  DEFAULT_DISABLE_WRITE,
 } from './constants.js'
 
-export { APPLY_PATCH_SETTINGS_NS, DEFAULT_INJECTION_MODE, INJECTION_MODES }
-export type { InjectionMode }
-
-/** Resolved settings document shape. */
-export interface ApplyPatchSettings {
-  mode: InjectionMode
+export {
+  APPLY_PATCH_SETTINGS_NS,
+  BUILTIN_EDIT_TOOL,
+  BUILTIN_WRITE_TOOL,
+  DEFAULT_DISABLE_EDIT,
+  DEFAULT_DISABLE_WRITE,
 }
 
-/** Base layer the host registers beneath the user document (composition default). */
-export const APPLY_PATCH_SETTINGS_BASE: ApplyPatchSettings = {
-  mode: DEFAULT_INJECTION_MODE,
+/** Plain settings document shape (a hand-written patch or a settings-page write). */
+export interface ApplyPatchSettings {
+  /** Hide the built-in `edit` tool (targeted text edits). */
+  disableEdit?: boolean | null
+  /** Hide the built-in `write` tool (whole-file creation/overwrite). */
+  disableWrite?: boolean | null
 }

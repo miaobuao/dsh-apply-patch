@@ -1,129 +1,65 @@
 /**
- * Model-conditional tool injection.
+ * Built-in tool suppression.
  *
- * The `apply_patch` tool is only useful to models that know its format
- * (OpenAI's GPT family, which were trained on codex's apply_patch). The
- * settings dropdown controls the injection scope:
+ * `apply_patch` is always registered by this plugin; the settings only decide
+ * which BUILT-IN file-editing tools the model should stop seeing. The tool list
+ * is assembled per agent step through the `system-prompt/assemble` waterfall,
+ * so filtering the assembled list is enough: a hidden tool is neither offered
+ * to the model nor callable by it in that step.
  *
- *   - `off`      — the tool is never offered to any model.
- *   - `gpt-only` — offered only to models whose id starts with `gpt-`.
- *   - `all`      — offered to every model.
- *
- * Mechanics: the tool list is assembled per agent step via the
- * `system-prompt/assemble` waterfall. The model that will run the NEXT
- * request is resolved there too: the model-selection layer (host-apiproxy's
- * `installModelSelection`, mounted by the web and headless entry points)
- * reads the session's selection and injects `variables.provider` /
- * `variables.model` into the assembly — before my outer filter runs. So the
- * filter reads the authoritative model straight from the assembled
- * variables, with NO lag after a mid-session model switch.
- *
- * Fallbacks when the model-selection layer is absent (custom compositions):
- * the last model captured from `agent/request`, then the session's logged
- * request header, then `ctx.agentDefaultModel.currentSelection()`.
+ * Both hidden names belong to `@deepseek-ai/dsh-tool-fs`; the settings page
+ * exposes one switch per tool, and the values are read from the live config
+ * handles on every assembly, so a toggle takes effect without re-registering
+ * the plugin.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { InjectionMode } from '../shared/config.js'
+import {
+  BUILTIN_EDIT_TOOL,
+  BUILTIN_WRITE_TOOL,
+} from '../shared/config.js'
 
-/** The tool name this plugin gates. */
+/** The tool this plugin adds (always offered). */
 export const APPLY_PATCH_TOOL_NAME = 'apply_patch'
 
-/** Whether a model id counts as a "GPT model" (codex-trained family). */
-export function isGptModel(modelId: string): boolean {
-  return modelId.startsWith('gpt-')
+/** Built-in tool names this plugin may hide, in display order. */
+export const SUPPRESSIBLE_TOOLS = [BUILTIN_EDIT_TOOL, BUILTIN_WRITE_TOOL] as const
+
+/** A snapshot of the two switches, already unwrapped from their volatile cells. */
+export interface SuppressionFlags {
+  disableEdit: boolean
+  disableWrite: boolean
 }
 
-/** Decide whether the tool is offered for a model under a mode. */
-export function shouldOfferTool(mode: InjectionMode, modelId: string | undefined): boolean {
-  if (mode === 'off') return false
-  if (modelId === undefined || modelId === '') return mode === 'all'
-  if (mode === 'all') return true
-  return isGptModel(modelId)
+/** The set of built-in tool names the current settings hide. */
+export function suppressedTools(flags: SuppressionFlags): Set<string> {
+  const hidden = new Set<string>()
+  if (flags.disableEdit) hidden.add(BUILTIN_EDIT_TOOL)
+  if (flags.disableWrite) hidden.add(BUILTIN_WRITE_TOOL)
+  return hidden
 }
 
-/** Read the current injection mode from a bound settings scope. */
-export type ModeReader = () => InjectionMode
-
-/** Per-agent resolved-route cache (fallback tier only). */
-interface RouteCapture {
-  provider: string
-  model: string
-}
+/** Read the current suppression set (called once per assembly). */
+export type SuppressionReader = () => Set<string>
 
 /**
- * Install the two hooks. Returns the disposer.
+ * Install the assembly hook. Returns the disposer.
+ *
+ * The hook drops hidden tools from the assembled list; when nothing is hidden
+ * it returns the assembly untouched (identity-stable for downstream consumers).
  */
-export function installInjector(
-  ctx: Context,
-  readMode: ModeReader,
-): () => void {
-  const routes = new Map<string, RouteCapture>()
-
-  const disposeRequest = ctx.on('agent/request', async (payload, next) => {
-    const resolved = await next()
-    const agentId = payload.agent?.id
-    if (agentId !== undefined && resolved?.model !== undefined) {
-      routes.set(agentId, {
-        provider: resolved.provider ?? '',
-        model: resolved.model,
-      })
-    }
-    return resolved
+export function installToolSuppressor(ctx: Context, readSuppressed: SuppressionReader): () => void {
+  return ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
+    return withoutTools(await next(), readSuppressed())
   })
-
-  const disposeAssemble = ctx.on('system-prompt/assemble', async (assembly, context, next) => {
-    const assembled = await next()
-    const mode = readMode()
-    if (mode === 'all') return assembled
-    if (mode === 'off') {
-      return dropTool(assembled)
-    }
-    // gpt-only: prefer the model the model-selection layer injected into the
-    // assembly variables (authoritative, zero lag), then fall back.
-    const model = assembled.variables?.model
-      ?? modelForAgent(ctx, context.agent, routes)
-    if (!shouldOfferTool('gpt-only', model)) {
-      return dropTool(assembled)
-    }
-    return assembled
-  })
-
-  return () => {
-    disposeRequest()
-    disposeAssemble()
-  }
 }
 
-/** Drop the apply_patch tool from an assembly's tool list (no-op when absent). */
-function dropTool(assembly: PromptAssembly): PromptAssembly {
+/** Drop named tools from one assembly (exported for tests). */
+export function withoutTools(assembly: PromptAssembly, hidden: Set<string>): PromptAssembly {
+  if (hidden.size === 0) return assembly
   const tools: ToolSchema[] = assembly.tools
-  if (!tools.some((tool) => tool.name === APPLY_PATCH_TOOL_NAME)) return assembly
-  return {
-    ...assembly,
-    tools: tools.filter((tool) => tool.name !== APPLY_PATCH_TOOL_NAME),
-  }
-}
-
-/** Resolve the model that will run the next request for this agent (fallback tier). */
-function modelForAgent(
-  ctx: Context,
-  agent: Agent | undefined,
-  routes: Map<string, RouteCapture>,
-): string | undefined {
-  if (agent !== undefined) {
-    const captured = routes.get(agent.id)
-    if (captured !== undefined) return captured.model
-    // A session may already have logged a request header (resumed session).
-    const header = agent.session?.requestHeader?.()
-    const loggedModel = header?.config?.model
-    if (typeof loggedModel === 'string' && loggedModel.length > 0) return loggedModel
-  }
-  // Fall back to the live default selection (same tier host-apiproxy uses).
-  // Use ctx.get so an absent service reads as undefined instead of throwing.
-  const defaults = ctx.get('agentDefaultModel')
-  const model = defaults?.currentSelection?.()?.model
-  return typeof model === 'string' && model.length > 0 ? model : undefined
+  const kept = tools.filter((tool) => !hidden.has(tool.name))
+  if (kept.length === tools.length) return assembly
+  return { ...assembly, tools: kept }
 }

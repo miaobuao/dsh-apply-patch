@@ -1,0 +1,94 @@
+/*
+ * Styles for the Apply Patch configuration section in the Plugins center.
+ *
+ * The section renders inside the bundle page's content column: a header (title
+ * plus a one-line summary) above two switch rows, followed by the save/error
+ * status. Colors and radii follow the built-in settings language.
+ */
+
+/* page layout */
+
+.ap-config {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.ap-config-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-config-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+.ap-config-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+/* body layout */
+
+.ap-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ap-config-readonly {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-warn, #b58900);
+}
+
+.ap-toggle-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ap-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.ap-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+.ap-toggle-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+.ap-config-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.8));
+}
+
+.ap-config-status-ok {
+  color: var(--dsw-alias-label-success, #2e7d32);
+}
+
+.ap-config-status-error {
+  color: var(--dsw-alias-label-error, #c62828);
+}
