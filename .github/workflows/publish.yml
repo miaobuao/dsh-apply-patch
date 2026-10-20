@@ -17,22 +17,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          # pnpm 11 requires the registry to be written to .npmrc for the
-          # OIDC handshake; do NOT set NODE_AUTH_TOKEN here.
-          registry-url: https://registry.npmjs.org
-          cache: pnpm
+          persist-credentials: false
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      # pnpm 11+ is installed with pnpm/setup. pnpm/action-setup only gained
+      # pnpm 11 support in v6, and v6's own docs now point pnpm 11+ users at
+      # pnpm/setup; this workflow was still on action-setup v4, which predates
+      # that support. pnpm/setup also installs Node.js, so actions/setup-node
+      # is no longer needed.
+      #
+      # No NODE_AUTH_TOKEN and no .npmrc auth line are set up on purpose:
+      # pnpm 11 detects the GitHub OIDC environment and exchanges its
+      # id-token for a short-lived publish token on its own.
+      # No dependency cache either: this job holds the OIDC token, and a
+      # poisoned store cache would be attacker-controlled code running next
+      # to it. Re-add `cache: true` if install time ever matters more.
+      - name: Setup pnpm & Node.js
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          # Fail if pnpm-lock.yaml is missing or out of sync
+          # (runs `pnpm install --frozen-lockfile`).
+          require-lockfile: true
 
       - name: Verify tag matches package version
         run: |
@@ -42,6 +49,22 @@ jobs:
             echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
             exit 1
           fi
+
+      # Prereleases must not land on `latest`: derive the dist-tag from the
+      # version's prerelease identifier, e.g. v0.0.1-alpha.1 -> alpha,
+      # v1.0.0-rc.2 -> rc, v0.1.0 -> latest.
+      - name: Determine npm dist-tag
+        id: dist-tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="${VERSION#*-}"
+            TAG="${TAG%%.*}"
+          else
+            TAG="latest"
+          fi
+          echo "Publishing $VERSION under dist-tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Typecheck
         run: pnpm typecheck
@@ -55,4 +78,4 @@ jobs:
       # pnpm 11 publishes natively over OIDC and attaches provenance for
       # public packages from public repositories.
       - name: Publish to npm (OIDC trusted publishing)
-        run: pnpm publish --no-git-checks --provenance
+        run: pnpm publish --no-git-checks --provenance --tag "${{ steps.dist-tag.outputs.tag }}"
