@@ -46,6 +46,7 @@
     "tsconfig.build.json",
     "tsconfig.client.json",
     "tsconfig.client-types.json",
+    "tsconfig.test.json",
     "tsdown.config.ts"
   ],
   "publishConfig": {
@@ -54,8 +55,9 @@
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.build.json && tsc -p tsconfig.client-types.json && tsdown",
     "prepare": "npm run build",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
-    "watch": "tsdown --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.test.json",
+    "verify:manifest": "node scripts/verify-manifest.mjs",
+    "watch": "echo '[watch] declaration emit errors print on this terminal; the session keeps running' ; tsc -p tsconfig.build.json --watch --preserveWatchOutput & tsc -p tsconfig.client-types.json --watch --preserveWatchOutput & tsdown --watch ; wait",
     "test": "tsx --test test/*.test.ts"
   },
   "dsh": {
@@ -74,17 +76,18 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-locale": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-fs": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-sandbox": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-sandbox-policy": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-settings": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-shell": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
-    "@deepseek-ai/dsh-tools": "^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1",
+    "@deepseek-ai/cordis": "~4.0.5-alpha.1",
+    "@deepseek-ai/dsh-agent": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-locale": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-fs": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-sandbox": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-sandbox-policy": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-settings": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-shell": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-tools": "^0.2.1-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

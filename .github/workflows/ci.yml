@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Reading the repository is all this workflow does, so keep the default
+# token least-privileged.
+permissions:
+  contents: read
+
+# A newer push on the same ref makes the running check obsolete. This is a
+# separate workflow from publish.yml, so cancelling here can never cancel a
+# publish run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, test & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Same install recipe as publish.yml: pnpm 11+ comes from pnpm/setup,
+      # and pnpm/action-setup v4 (which the task template suggested) predates
+      # pnpm 11 support. pnpm/setup also installs Node.js, so
+      # actions/setup-node is not needed.
+      - name: Setup pnpm & Node.js
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          require-lockfile: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # The published entry points, loader id, externals, and dependency floors
+      # are invisible to tsc and to the unit tests; check them against the
+      # artifacts the previous step just emitted.
+      - name: Verify published manifest
+        run: node scripts/verify-manifest.mjs
+
+      # Build precedes Test: test/client-bundle.test.ts is an artifact-level
+      # smoke test that skips itself when lib/ is absent, so running it before
+      # the build would report green without exercising the shipped bundle.
+      - name: Test
+        run: pnpm test
