@@ -39,9 +39,10 @@ import {
   type FileSystem,
   type FsObservation,
   type FsTarget,
+  type FsVersion,
   type FsWriteIntent,
 } from '@deepseek-ai/dsh-fs'
-import { sandboxDenialMarker, type SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
+import { sandboxDenialMarker, type SandboxExecutionPolicy, type SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell'
 import { DEFAULT_ALLOW_UNOBSERVED_OVERWRITE } from '../shared/constants.js'
 import type { PatchHunk, UpdateChunk } from './parser.js'
@@ -55,8 +56,8 @@ export interface AffectedPaths {
 
 /** Sandboxed capability faces the applier needs. */
 export interface ApplyPatchCapabilities {
-  fs: FileSystem
-  shell: ShellExecutor | undefined
+  fs: Pick<FileSystem, 'stat' | 'readText' | 'writeText' | 'processPath'>
+  shell: Pick<ShellExecutor, 'resolve' | 'execute'> | undefined
   /** Emit an `fs/observed` record so the observation policy admits the write. */
   observe(target: FsTarget, observation: FsObservation): void
   /** Resolve the write intent for a target through the fs/write-intent waterfall. */
@@ -76,10 +77,125 @@ export interface ApplyPatchOptions {
 
 /** Pure line transformation failure (context/old lines not found). */
 export class ApplyError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'ApplyError'
   }
+}
+
+/**
+ * The step of one hunk that failed.
+ */
+export type ApplyStage =
+  | 'resolve'
+  | 'add'
+  | 'delete'
+  | 'read'
+  | 'derive'
+  | 'verify'
+  | 'update'
+  | 'move-write'
+  | 'move-remove'
+
+/** A shell removal either never started or has an unconfirmed result. */
+export class RemovalFailure extends ApplyError {
+  /**
+   * @param path - the file whose removal was attempted.
+   * @param outcome - `not-started` when no process was spawned, `unknown` once
+   *   one was requested but the fs seam cannot confirm what it did.
+   * @param cause - the underlying failure that carried the outcome.
+   */
+  constructor(
+    readonly path: string,
+    readonly outcome: 'not-started' | 'unknown',
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'RemovalFailure'
+  }
+  /**
+   * Preserve the provider failure code for routing.
+   * @returns the cause's `code`, or undefined when it carried none.
+   */
+  get code(): string | undefined {
+    const code = errorCode(this.cause)
+    return typeof code === 'string' ? code : undefined
+  }
+}
+
+/**
+ * A failure raised by `applyHunks` after some hunks may have been applied.
+ *
+ * Applied hunks are never rolled back (Codex semantics), so a failure is often
+ * partial: this error keeps the original `cause`, names the `stage` that failed
+ * and lists every mutation that already landed. The message is rendered once
+ * from those fields, so the model reads the same partial state a caller sees.
+ */
+export class ApplyFailure extends ApplyError {
+  /** The step that failed. */
+  readonly stage: ApplyStage
+  /** Committed hunks in codex A/M/D vocabulary, in application order. */
+  readonly applied: readonly string[]
+  /** Paths already mutated, grouped by kind. */
+  readonly affected: { readonly [K in keyof AffectedPaths]: readonly string[] }
+  /** For a failed Move, the destination that already holds the new contents. */
+  readonly landedAt: string | undefined
+  /** Machine-routable `code` copied from the cause, so it survives the wrap. */
+  readonly code: string | undefined
+  /** Removal status, when the failing operation was a shell removal. */
+  readonly removal: { readonly path: string; readonly outcome: 'not-started' | 'unknown' } | undefined
+
+  constructor(
+    cause: unknown,
+    stage: ApplyStage,
+    applied: readonly string[],
+    affected: Readonly<AffectedPaths>,
+    landedAt?: string,
+  ) {
+    super(renderFailure(cause, applied, landedAt), { cause })
+    this.name = 'ApplyFailure'
+    this.stage = stage
+    this.applied = Object.freeze([...applied])
+    this.affected = Object.freeze({
+      added: Object.freeze([...affected.added]),
+      modified: Object.freeze([...affected.modified]),
+      deleted: Object.freeze([...affected.deleted]),
+    })
+    this.landedAt = landedAt
+    const code = errorCode(cause)
+    this.code = typeof code === 'string' ? code : undefined
+    this.removal = cause instanceof RemovalFailure
+      ? Object.freeze({ path: cause.path, outcome: cause.outcome })
+      : undefined
+  }
+}
+
+/**
+ * Render one failure for the model: the original message, the move caveat when
+ * the destination already landed, then every mutation that preceded the failure.
+ *
+ * @param cause - the error that stopped the patch.
+ * @param applied - committed hunks in A/M/D vocabulary, in order.
+ * @param landedAt - a Move destination that already holds the new contents.
+ * @returns the model-facing message.
+ */
+function renderFailure(
+  cause: unknown,
+  applied: readonly string[],
+  landedAt: string | undefined,
+): string {
+  const lines = [cause instanceof Error ? cause.message : String(cause)]
+  if (landedAt !== undefined) {
+    lines.push('', cause instanceof RemovalFailure && cause.outcome === 'not-started'
+      ? `The updated contents were written to ${landedAt}; the source was left in place because no removal started.`
+      : `The updated contents were written to ${landedAt}, but source removal was not confirmed. ` +
+        'Inspect both paths before retrying; the source may have changed or been removed.')
+  }
+  if (cause instanceof RemovalFailure && cause.outcome === 'unknown') {
+    lines.push('', `Removal outcome is unknown for ${cause.path}. Read the path before retrying.`)
+  }
+  if (applied.length > 0) lines.push('', 'Applied before the failure:', ...applied)
+  return lines.join('\n')
 }
 
 /** Read-only view over one file's lines, with lazily cached normal forms. */
@@ -294,6 +410,23 @@ function errorCode(error: unknown): unknown {
 }
 
 /**
+ * Build the shared sandbox-denial failure: one marker, one stable code, so a
+ * denied removal is the same failure kind as a denied write.
+ *
+ * @param mode - the sandbox mode that denied the operation.
+ * @param message - what was denied, in the caller's wording.
+ * @param cause - the underlying failure, when a provider reported one.
+ * @returns the machine-routable `FS_SANDBOX_DENIED` error.
+ */
+function sandboxDenial(mode: SandboxMode, message: string, cause?: unknown): FsError {
+  return new FsError(
+    `${sandboxDenialMarker(mode)} ${message}`,
+    'FS_SANDBOX_DENIED',
+    cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
  * Map an fs mutation failure: sandbox denials become the shared `[sandbox: ...]`
  * marker error and the strict no-clobber guard gains an actionable hint.
  *
@@ -308,11 +441,7 @@ function mapMutationError(
 ): unknown {
   const code = errorCode(error)
   if (code === 'FS_SANDBOX_DENIED' && policy !== undefined) {
-    return new FsError(
-      `${sandboxDenialMarker(policy.mode)} apply_patch: the sandbox denied the file operation.`,
-      'FS_SANDBOX_DENIED',
-      { cause: error },
-    )
+    return sandboxDenial(policy.mode, 'apply_patch: the sandbox denied the file operation.', error)
   }
   if (code === 'FS_NOT_OBSERVED' && !allowUnobservedOverwrite) {
     const message = error instanceof Error ? error.message : String(error)
@@ -354,10 +483,10 @@ async function destinationIntent(
  * Apply parsed hunks through the sandboxed seams, sequentially in patch order.
  *
  * Hunks must run in order: a later hunk may update a file an earlier hunk just
- * created. Writes are therefore never prefetched or parallelised. On failure
- * the error keeps its type/code and is annotated with the paths that already
- * changed, so the model can reason about the partial state (Codex semantics:
- * an applied hunk is never rolled back).
+ * created. Writes are therefore never prefetched or parallelised. On failure it
+ * throws an {@link ApplyFailure} carrying the original cause, the step that
+ * failed and the paths that already changed, so the model can reason about the
+ * partial state (Codex semantics: an applied hunk is never rolled back).
  *
  * @param hunks - parsed codex hunks.
  * @param resolveTarget - resolves a hunk path (relative against session cwd).
@@ -381,13 +510,20 @@ export async function applyHunks(
   const applied: string[] = []
   const { fs } = caps
   const allow = options.allowUnobservedOverwrite
+  // The step the loop is attempting, and (for a failed Move source removal) the
+  // destination whose contents already landed. Both feed the failure below.
+  let stage: ApplyStage = 'resolve'
+  let landedAt: string | undefined
 
   try {
     for (const hunk of hunks) {
+      stage = 'resolve'
+      landedAt = undefined
       signal.throwIfAborted()
 
       if (hunk.kind === 'add') {
         const target = await resolveTarget(hunk.path)
+        stage = 'add'
         const intent = await destinationIntent(caps, target, allow)
         let outcome
         try {
@@ -395,14 +531,15 @@ export async function applyHunks(
         } catch (error) {
           throw mapMutationError(error, policy, allow)
         }
-        caps.observe(target, { kind: 'present', version: outcome.version })
         affected.added.push(target.displayPath)
         applied.push(`A ${target.displayPath}`)
+        caps.observe(target, { kind: 'present', version: outcome.version })
         continue
       }
 
       if (hunk.kind === 'delete') {
         const target = await resolveTarget(hunk.path)
+        stage = 'delete'
         const info = await fs.stat(target, signal)
         if (info === undefined) {
           throw new ApplyError(`Failed to delete file ${target.displayPath}: no such file`)
@@ -421,10 +558,13 @@ export async function applyHunks(
             )
           }
         }
-        await deleteViaShell(caps, target, policy, signal)
-        caps.observe(target, { kind: 'absent' })
+        // A prior read is the only guard Delete has, so it is re-checked right
+        // before the run. Default mode keeps Codex's "delete what is there"
+        // semantics and passes no version.
+        await deleteViaShell(caps, target, policy, signal, allow ? undefined : info.version)
         affected.deleted.push(target.displayPath)
         applied.push(`D ${target.displayPath}`)
+        caps.observe(target, { kind: 'absent' })
         continue
       }
 
@@ -439,13 +579,24 @@ export async function applyHunks(
       if (info.type !== 'file') {
         throw new ApplyError(`Failed to update file ${target.displayPath}: not a regular file`)
       }
+      stage = 'read'
       let original: string
       try {
         original = await fs.readText(target, signal)
       } catch (error) {
         throw mapMutationError(error, policy, allow)
       }
+      stage = 'derive'
       const newContents = deriveNewContents(original, target.displayPath, hunk.chunks)
+      stage = 'verify'
+      const afterRead = await fs.stat(target, signal)
+      if (afterRead?.version !== info.version) {
+        throw new FsError(
+          `cannot update ${target.displayPath}: the file changed while it was being read — `
+          + 're-read it, then retry',
+          'FS_STALE_VERSION',
+        )
+      }
       // The hunk matched the current bytes, so this is a genuine read
       // observation. Report it before asking for the version-guarded intent.
       caps.observe(target, { kind: 'present', version: info.version })
@@ -458,6 +609,8 @@ export async function applyHunks(
         } catch (error) {
           throw mapMutationError(error, policy, allow)
         }
+        affected.modified.push(destination.displayPath)
+        applied.push(`M ${destination.displayPath}`)
         caps.observe(destination, { kind: 'present', version: outcome.version })
       }
 
@@ -466,11 +619,12 @@ export async function applyHunks(
         if (sameTarget(target, destination)) {
           // Moving onto itself would write the new contents and then delete the
           // file; treat it as a plain in-place update instead.
+          stage = 'update'
           await writeUpdated(target)
-          affected.modified.push(target.displayPath)
-          applied.push(`M ${target.displayPath}`)
           continue
         }
+        stage = 'move-write'
+        requireShell(caps)
         const intent = await destinationIntent(caps, destination, allow)
         let outcome
         try {
@@ -478,71 +632,106 @@ export async function applyHunks(
         } catch (error) {
           throw mapMutationError(error, policy, allow)
         }
-        caps.observe(destination, { kind: 'present', version: outcome.version })
         applied.push(`M ${destination.displayPath}`)
-        await deleteViaShell(caps, target, policy, signal)
-        caps.observe(target, { kind: 'absent' })
         affected.modified.push(destination.displayPath)
+        landedAt = destination.displayPath
+        caps.observe(destination, { kind: 'present', version: outcome.version })
+        // The destination is committed from here on: if the source cannot be
+        // removed the file stays at both paths, and the failure says so. The
+        // source version is guarded in BOTH modes: the destination now holds
+        // content derived from that exact version, so removing a source that
+        // moved on would discard the newer bytes.
+        stage = 'move-remove'
+        await deleteViaShell(caps, target, policy, signal, info.version)
+        landedAt = undefined
+        caps.observe(target, { kind: 'absent' })
         continue
       }
 
+      stage = 'update'
       await writeUpdated(target)
-      affected.modified.push(target.displayPath)
-      applied.push(`M ${target.displayPath}`)
     }
   } catch (error) {
-    if (applied.length > 0 && error instanceof Error) {
-      error.message += `\n\nApplied before the failure:\n${applied.join('\n')}`
-    }
-    throw error
+    throw new ApplyFailure(error, stage, applied, affected, landedAt)
   }
 
   return affected
 }
 
-/** Remove one file through the sandboxed shell seam (`rm`), never bypassing the sandbox. */
+/** Resolve the optional deletion capability before any dependent mutation. */
+function requireShell(caps: ApplyPatchCapabilities): NonNullable<ApplyPatchCapabilities['shell']> {
+  if (caps.shell === undefined) {
+    throw new ApplyError('cannot remove files: no sandboxed shell is mounted — mount a shell provider, then retry')
+  }
+  return caps.shell
+}
+
+/**
+ * Remove one file through the sandboxed shell seam (`rm`), never bypassing the sandbox.
+ *
+ * The fs seam has no remove capability, so this is a check-then-execute pair and
+ * is NOT atomic: `expectedVersion` re-checks the file immediately before the run
+ * and refuses a changed or vanished one, which narrows the window but cannot
+ * close it. Every failure is raised as a {@link RemovalFailure} so a caller can
+ * tell a removal that never started from one whose effect is unconfirmed.
+ *
+ * @param caps - fs + shell faces the removal goes through.
+ * @param target - the resolved file to remove.
+ * @param policy - the per-session sandbox policy stamping the run.
+ * @param signal - caller cancellation.
+ * @param expectedVersion - the version the caller based its work on, when it has one.
+ */
 async function deleteViaShell(
   caps: ApplyPatchCapabilities,
   target: FsTarget,
   policy: SandboxExecutionPolicy | undefined,
   signal: AbortSignal,
+  expectedVersion?: FsVersion,
 ): Promise<void> {
   // One shell run per file is deliberate: a batched `rm -- a b ...` would lose
   // the per-file outcome and change failure ordering (the shell stops at a
   // different point than sequential hunks do). Batching becomes worthwhile
   // only when the upstream FileSystem grows a remove capability.
-  const shell = caps.shell
-  if (shell === undefined) {
-    throw new ApplyError(
-      `Cannot delete ${target.displayPath}: no sandboxed shell is mounted in this composition. ` +
-      `Use *** Update File: to empty the file instead.`,
-    )
-  }
-  // The process path comes from the fs backend (same execution world).
-  const processPath = caps.fs.processPath(target)
-  // The seam has no one-shot `run(request)`: `resolve()` turns the request into
-  // a fully-resolved spec, `execute(spec)` prepares and spawns it, and the
-  // handle's foreground projection `result()` settles with the run outcome.
-  // Both are abstract on `ShellExecutor` and identical in dsh 0.1.7-rc.2 and
-  // 0.2.0-rc.1; only `result()` carries `exitCode` / `signal` / `sandbox`.
-  const spec = shell.resolve({
-    command: `rm -- ${shellQuote(processPath)}`,
-    sandboxPolicy: policy,
-    signal,
-  })
-  const execution = await shell.execute(spec)
-  const result = await execution.result()
-  if (result.sandbox?.denied) {
-    throw new ApplyError(
-      `${sandboxDenialMarker(result.sandbox.mode)} ` +
-      `Cannot delete ${target.displayPath}: the sandbox denied the removal.`,
-    )
-  }
-  if (result.exitCode !== 0 || result.signal !== null) {
-    const detail = result.signal !== null
-      ? `killed by signal: ${result.signal}`
-      : `exit code: ${result.exitCode}`
-    throw new ApplyError(`Failed to delete file ${target.displayPath} (${detail})`)
+  let requested = false
+  try {
+    signal.throwIfAborted()
+    const shell = requireShell(caps)
+    if (expectedVersion !== undefined) {
+      const info = await caps.fs.stat(target, signal)
+      if (info === undefined || info.version !== expectedVersion) {
+        throw new FsError(
+          `cannot delete ${target.displayPath}: the file changed or disappeared after it was read — `
+          + 'read it again, then retry',
+          'FS_STALE_VERSION',
+        )
+      }
+    }
+    // The process path comes from the fs backend (same execution world).
+    const processPath = caps.fs.processPath(target)
+    // `resolve()` turns the request into a fully-resolved spec and `execute(spec)`
+    // prepares and spawns it; only the handle's foreground projection `result()`
+    // carries `exitCode` / `signal` / `sandbox`.
+    const spec = shell.resolve({
+      command: `rm -- ${shellQuote(processPath)}`,
+      sandboxPolicy: policy,
+      signal,
+    })
+    signal.throwIfAborted()
+    requested = true
+    const execution = await shell.execute(spec)
+    const result = await execution.result()
+    if (result.sandbox?.denied) {
+      throw new RemovalFailure(target.displayPath, 'not-started',
+        sandboxDenial(result.sandbox.mode, `Cannot delete ${target.displayPath}: the sandbox denied the removal.`))
+    }
+    if (result.exitCode !== 0 || result.signal !== null) {
+      const detail = result.signal !== null ? `killed by signal: ${result.signal}` : `exit code: ${result.exitCode}`
+      throw new RemovalFailure(target.displayPath, 'unknown',
+        new ApplyError(`Failed to delete file ${target.displayPath} (${detail})`))
+    }
+  } catch (error) {
+    if (error instanceof RemovalFailure) throw error
+    throw new RemovalFailure(target.displayPath, requested ? 'unknown' : 'not-started', error)
   }
 }
 

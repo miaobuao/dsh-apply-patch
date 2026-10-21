@@ -16,11 +16,13 @@
  * without sandbox-exec permission) refuses `workspace-write` shell commands.
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import type { Plugin } from '@deepseek-ai/cordis'
 import { apply as applyObservationPolicy } from '@deepseek-ai/dsh-fs-observation-policy'
 import { SandboxedFileSystem } from '@deepseek-ai/dsh-fs-sandbox'
 import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
@@ -30,13 +32,14 @@ import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { apply as applyPlugin } from '../src/index.js'
+import { apply as applyPlugin, inject as pluginInject } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
 import { APPLY_PATCH_TOOL_NAME } from '../src/host/injector.js'
 
 /** Boot a composed context and apply the plugin with the given entry config. */
 async function boot(workspace: string, mode: string, entryConfig: Record<string, unknown>): Promise<Context> {
   const ctx = new Context()
+  await ctx.plugin(AgentRegistry)
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(LocalSandboxProvider, {})
   await ctx.plugin(SandboxPolicyService, { mode: mode as never, workspaceRoot: workspace })
@@ -44,13 +47,14 @@ async function boot(workspace: string, mode: string, entryConfig: Record<string,
   await ctx.plugin(SandboxBashExecutor, {})
   await ctx.plugin(ToolRuntime, {})
   await ctx.plugin(SystemPrompt, {})
-  await ctx.plugin(SessionProjectionRegistry, {})
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(applyObservationPolicy)
   await ctx.plugin({
     name: 'dsh-apply-patch',
-    inject: ['tools', 'fs', 'systemPrompt', 'sandboxPolicy'],
+    // The plugin's own dependency list, so a missing inject entry fails here.
+    inject: [...pluginInject],
     apply: (pluginCtx: Context) => applyPlugin(pluginCtx, ApplyPatchSettingsSchema(entryConfig) as never),
-  } as never)
+  } satisfies Plugin)
   return ctx
 }
 
@@ -220,6 +224,53 @@ describe('move semantics', () => {
     ].join('\n'))
     assert.match(out, /M .*a\.txt/)
     assert.equal(readFileSync(join(ws, 'a.txt'), 'utf8'), 'new\n', 'self-move must not delete the file')
+  })
+
+  it('creates the destination directory when the move target is nested', async () => {
+    const ws = workspace()
+    writeFileSync(join(ws, 'a.txt'), 'old\n')
+    const ctx = await boot(ws, 'danger-full-access', {})
+    await runPatch(ctx, fakeExec(ws), [
+      '*** Begin Patch',
+      '*** Update File: a.txt',
+      '*** Move to: nested/b.txt',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n'))
+    assert.equal(readFileSync(join(ws, 'nested', 'b.txt'), 'utf8'), 'new\n')
+    assert.equal(existsSync(join(ws, 'a.txt')), false)
+  })
+})
+
+describe('shell quoting and backend fidelity', () => {
+  it('deletes a name that needs shell quoting', async () => {
+    const ws = workspace()
+    const name = "it's a file ü.txt"
+    writeFileSync(join(ws, name), 'x\n')
+    const ctx = await boot(ws, 'danger-full-access', {})
+    const out = await runPatch(ctx, fakeExec(ws), `*** Begin Patch\n*** Delete File: ${name}\n*** End Patch`)
+    assert.match(out, /D .*it's a file ü\.txt/)
+    assert.equal(existsSync(join(ws, name)), false)
+  })
+
+  it('preserves CRLF through the real backend', async () => {
+    const ws = workspace()
+    writeFileSync(join(ws, 'w.txt'), 'one\r\ntwo\r\n')
+    const ctx = await boot(ws, 'danger-full-access', {})
+    await runPatch(ctx, fakeExec(ws), '*** Begin Patch\n*** Update File: w.txt\n@@\n-two\n+TWO\n*** End Patch')
+    assert.equal(readFileSync(join(ws, 'w.txt'), 'utf8'), 'one\r\nTWO\r\n')
+  })
+
+  it('writes through a symbolic link to its target', async () => {
+    const ws = workspace()
+    writeFileSync(join(ws, 'real.txt'), 'v1\n')
+    symlinkSync(join(ws, 'real.txt'), join(ws, 'link.txt'))
+    const ctx = await boot(ws, 'danger-full-access', {})
+    await runPatch(ctx, fakeExec(ws), '*** Begin Patch\n*** Update File: link.txt\n@@\n-v1\n+v2\n*** End Patch')
+    assert.equal(readFileSync(join(ws, 'real.txt'), 'utf8'), 'v2\n')
+    assert.equal(readFileSync(join(ws, 'link.txt'), 'utf8'), 'v2\n')
   })
 })
 
