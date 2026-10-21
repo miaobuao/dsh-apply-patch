@@ -11,19 +11,23 @@
  * tool ({"command":["apply_patch","*** Begin Patch\n..."]}) so GPT-family
  * models that were trained on codex call it without adaptation: one `patch`
  * argument carrying the full codex patch document.
+ *
+ * The description carries only what the model cannot discover from its
+ * parameters or from an error message; the grammar rules live on the `patch`
+ * parameter, next to the value they constrain.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ParameterSchemaSpec, type ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { FileSystem, FsTarget, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { parsePatch } from './parser.js'
 import { applyHunks, renderSummary, type ApplyPatchCapabilities } from './applier.js'
+import { APPLY_PATCH_TOOL_NAME } from '../shared/constants.js'
 
-/** Model-facing description (codex-style, terse and unambiguous). */
+/** Model-facing description: what the tool does, plus the one document sample. */
 export const APPLY_PATCH_DESCRIPTION = [
-  'Apply a codex-style patch to files in the workspace. The patch uses the exact format OpenAI Codex trained models emit:',
+  'Apply a codex-style patch document to files in the workspace:',
   '',
   '```',
   '*** Begin Patch',
@@ -38,16 +42,21 @@ export const APPLY_PATCH_DESCRIPTION = [
   '*** End Patch',
   '```',
   '',
-  'Rules:',
-  '* The first line must be `*** Begin Patch` and the last `*** End Patch`.',
-  '* `*** Update File:` edits an existing file; hunks are blocks of `-`/`+`/` ` lines, optionally anchored by an `@@ context` line. Context must match exactly (whitespace-insensitive fallbacks apply).',
-  '* `*** Add File:` creates a new file; every content line must start with `+`. Overwrites the file if it already exists.',
-  '* `*** Delete File:` removes an existing file (through the sandbox).',
-  '* `*** Move to:` (inside an Update hunk) writes the updated content to the destination path and removes the original.',
-  '* `*** End of File` inside an Update hunk anchors the preceding block at the end of the file.',
-  '* All paths are resolved against the session working directory.',
-  '* All writes go through the DSH sandbox: a denied operation returns a `[sandbox: ...]` error — do not retry another way.',
+  'A failed patch is not rolled back: whatever was applied before the failure stays applied.',
+  'Relative paths resolve against the session working directory.',
 ].join('\n')
+
+/** Argument schema, exported so tests assert the rules the model actually gets. */
+export const APPLY_PATCH_PARAMETERS = {
+  patch: {
+    type: 'string',
+    required: true,
+    description: [
+      'The complete patch document: one `*** Begin Patch` / `*** End Patch` pair holding one or more file hunks.',
+      'Inside an Update hunk, `*** Move to: <path>` writes the updated content to that path and removes the original, and `*** End of File` anchors the block at the end of the file.',
+    ].join(' '),
+  },
+} as const satisfies ParameterSchemaSpec
 
 /** Capability faces the tool needs from the host composition. */
 export interface ToolFaces {
@@ -71,23 +80,20 @@ export function registerApplyPatchTool(
   faces: ToolFaces,
 ): () => void {
   return ctx.tools.register(defineTool({
-    name: 'apply_patch',
+    name: APPLY_PATCH_TOOL_NAME,
     description: APPLY_PATCH_DESCRIPTION,
-    parameters: {
-      patch: {
-        type: 'string',
-        required: true,
-        description: 'The full codex-format patch document, starting with `*** Begin Patch` and ending with `*** End Patch`.',
-      },
-    },
+    parameters: APPLY_PATCH_PARAMETERS,
     output: {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args, exec) {
       const patch: unknown = args.patch
-      if (typeof patch !== 'string' || patch.trim().length === 0) {
-        throw new Error('apply_patch: the `patch` argument must be a non-empty string')
+      if (typeof patch !== 'string' || patch.length === 0) {
+        throw new Error(
+          'apply_patch: the `patch` argument is empty — pass the whole document from '
+          + '`*** Begin Patch` to `*** End Patch`',
+        )
       }
       const hunks = parsePatch(patch)
 
