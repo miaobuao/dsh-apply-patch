@@ -2,31 +2,34 @@
  * Built-in tool suppression.
  *
  * `apply_patch` is always registered by this plugin; the settings only decide
- * which BUILT-IN file-editing tools the model should stop seeing. Suppression
- * has two halves, because hiding a tool and preventing a call are separate
- * operations in the host:
+ * which built-in file-editing tools the model stops seeing. Suppression needs
+ * three hooks because advertisement, guidance, and execution are separate:
  *
  *   - Advertisement: the tool list is assembled per agent step through the
  *     `system-prompt/assemble` waterfall, so filtering the assembled list hides
  *     the tool from the model.
+ *   - Guidance: `@deepseek-ai/dsh-tool-fs` registers one `tool:write` /
+ *     `tool:edit` section and derives its text from the tool registry, so the
+ *     matching section is dropped with the tool — otherwise the prompt keeps
+ *     describing a tool the model cannot call.
  *   - Execution: the agent loop resolves a call by NAME through the tool
- *     registry, which still holds the built-in definition even when it is not
- *     advertised. A monotonic `tools.guard` therefore denies a call that names
- *     a hidden tool, so a model that emits the name anyway (the system prompt
- *     still mentions `read` / `edit` / `write`) cannot execute it.
+ *     registry, which still holds the definition, so a monotonic guard denies a
+ *     call that names a hidden tool.
  *
- * Both hidden names belong to `@deepseek-ai/dsh-tool-fs`; the settings page
- * exposes one switch per tool, and the values are read from the live config
- * handles on every assembly, so a toggle takes effect without re-registering
- * the plugin.
+ * Why name-based instead of `ctx.tools.restrict`: in a shipped deployment the
+ * built-ins are mounted by the agent preset (`dsh-web-app/presets/*.patch.yml`
+ * lists a `tool-fs` row), so they are registered in the AGENT scope. A
+ * restriction only masks inherited GLOBAL tools — a scope-local name is not
+ * restrictable at all — so a restrict-only implementation silently hides
+ * nothing. Filtering the assembly and guarding by name covers both layers.
+ * To make the tools truly absent from the registry, disable them in the
+ * composition instead (a `config: { edit: false, write: false }` row on
+ * `@deepseek-ai/dsh-tool-fs`).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
-import {
-  BUILTIN_EDIT_TOOL,
-  BUILTIN_WRITE_TOOL,
-} from '../shared/config.js'
+import { BUILTIN_EDIT_TOOL, BUILTIN_WRITE_TOOL } from '../shared/constants.js'
+import type { ResolvedApplyPatchSettings } from './settings-schema.js'
 
 /** The tool this plugin adds (always offered). */
 export const APPLY_PATCH_TOOL_NAME = 'apply_patch'
@@ -34,38 +37,22 @@ export const APPLY_PATCH_TOOL_NAME = 'apply_patch'
 /** Built-in tool names this plugin may hide, in display order. */
 export const SUPPRESSIBLE_TOOLS = [BUILTIN_EDIT_TOOL, BUILTIN_WRITE_TOOL] as const
 
-/** A snapshot of the two suppression switches, already unwrapped from their volatile cells. */
-export interface SuppressionFlags {
-  disableEdit: boolean
-  disableWrite: boolean
-}
-
-/** The set of built-in tool names the current settings hide. */
-export function suppressedTools(flags: SuppressionFlags): Set<string> {
-  const hidden = new Set<string>()
-  if (flags.disableEdit) hidden.add(BUILTIN_EDIT_TOOL)
-  if (flags.disableWrite) hidden.add(BUILTIN_WRITE_TOOL)
-  return hidden
-}
-
-/** Read the current suppression set (called once per assembly). */
-export type SuppressionReader = () => Set<string>
-
-/** The `tools.guard` face this hook needs; absent on hosts that predate it. */
-interface ToolsGuardFace {
-  guard?: (guard: (execution: { readonly name: string }) => string | undefined) => () => void
-}
+/** Prefix of the guidance sections `dsh-tool-fs` names after its tool. */
+const TOOL_SECTION_PREFIX = 'tool:'
 
 /**
- * Install the assembly hook. Returns the disposer.
+ * The set of built-in tool names the current settings hide.
  *
- * The hook drops hidden tools from the assembled list; when nothing is hidden
- * it returns the assembly untouched (identity-stable for downstream consumers).
+ * The switches are volatile handles, so reading them here (instead of caching a
+ * derived set) is what lets a settings change reach the next assembly.
+ * @param config - the resolved entry config this host half was applied with.
+ * @returns the current suppression set; empty when both switches are off.
  */
-export function installToolSuppressor(ctx: Context, readSuppressed: SuppressionReader): () => void {
-  return ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
-    return withoutTools(await next(), readSuppressed())
-  })
+export function suppressedTools(config: ResolvedApplyPatchSettings): Set<string> {
+  const hidden = new Set<string>()
+  if (config.disableEdit.get()) hidden.add(BUILTIN_EDIT_TOOL)
+  if (config.disableWrite.get()) hidden.add(BUILTIN_WRITE_TOOL)
+  return hidden
 }
 
 /**
@@ -80,25 +67,57 @@ export function suppressedToolDenial(hidden: Set<string>, name: string): string 
 }
 
 /**
- * Install the execution guard that denies suppressed tools. Returns the disposer.
+ * Install the assembly hook. Returns the disposer.
  *
- * The assembly filter only changes what the model is OFFERED; the agent loop
- * resolves a call by name through the tool registry, so a hidden `edit` /
- * `write` call would still execute. The monotonic guard runs after the
- * extensible pre-execute policy and before the tool body, closing that gap.
- * Hosts without `tools.guard` keep the advertisement-only behaviour.
+ * The hook drops hidden tools and their guidance sections; when nothing is
+ * hidden it returns the assembly untouched (identity-stable for downstream
+ * consumers).
+ * @param ctx - plugin context carrying the `system-prompt/assemble` waterfall.
+ * @param config - resolved volatile settings.
+ * @returns the disposer removing the listener.
  */
-export function installToolGuard(ctx: Context, readSuppressed: SuppressionReader): () => void {
-  const tools = ctx.tools as unknown as ToolsGuardFace
-  if (typeof tools.guard !== 'function') return () => {}
-  return tools.guard((execution) => suppressedToolDenial(readSuppressed(), execution.name))
+export function installToolSuppressor(ctx: Context, config: ResolvedApplyPatchSettings): () => void {
+  return ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
+    return withoutHiddenTools(await next(), suppressedTools(config))
+  })
 }
 
-/** Drop named tools from one assembly (exported for tests). */
-export function withoutTools(assembly: PromptAssembly, hidden: Set<string>): PromptAssembly {
+/**
+ * Install the execution guard that denies suppressed tools. Returns the disposer.
+ *
+ * The assembly filter only changes what the model is OFFERED; a call is resolved
+ * by name through the registry, so a hidden `edit` / `write` would still run. The
+ * guard closes that gap for every layer the tool may be registered in.
+ * @param ctx - plugin context carrying the tools service.
+ * @param config - resolved volatile settings.
+ * @returns the disposer removing the guard.
+ */
+export function installToolGuard(ctx: Context, config: ResolvedApplyPatchSettings): () => void {
+  return ctx.tools.guard((execution) =>
+    suppressedToolDenial(suppressedTools(config), execution.name),
+  )
+}
+
+/**
+ * Drop hidden tools and their guidance sections from one assembly (exported for tests).
+ *
+ * A section carries guidance for a tool when its name is `tool:<name>` — how
+ * `dsh-tool-fs` names its `tool:read` / `tool:write` / `tool:edit` sections. The
+ * section text is decided from the tool registry, which still holds a hidden
+ * definition, so the section must be removed here rather than left to render.
+ * @param assembly - one assembled prompt.
+ * @param hidden - current suppression set.
+ * @returns the same assembly when nothing changed, else a filtered copy.
+ */
+export function withoutHiddenTools(assembly: PromptAssembly, hidden: Set<string>): PromptAssembly {
   if (hidden.size === 0) return assembly
-  const tools: ToolSchema[] = assembly.tools
-  const kept = tools.filter((tool) => !hidden.has(tool.name))
-  if (kept.length === tools.length) return assembly
-  return { ...assembly, tools: kept }
+  const tools = assembly.tools.filter((tool) => !hidden.has(tool.name))
+  const sections = assembly.sections.filter((section) => {
+    if (!section.name.startsWith(TOOL_SECTION_PREFIX)) return true
+    return !hidden.has(section.name.slice(TOOL_SECTION_PREFIX.length))
+  })
+  if (tools.length === assembly.tools.length && sections.length === assembly.sections.length) {
+    return assembly
+  }
+  return { ...assembly, tools, sections }
 }

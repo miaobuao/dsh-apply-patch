@@ -1,13 +1,13 @@
 /**
  * The plugin's `Config` schema — the host-only half of the settings contract.
  *
- * dsh >= 0.1.7 owns plugin settings as entry config: the loader validates the
- * profile patch (or the settings page) with this schema and hands the resolved
- * document to `apply()`. Resolution is not a plain-value pass-through: a
- * `volatile()` field arrives as a live handle (`{ get() }`, cosmokit's
- * `Volatile<T>`), so `apply()` takes `ResolvedApplyPatchSettings` while
- * `ApplyPatchSettings` stays the plain shape of a hand-written document — see
- * readSuppressed in ../index.ts, which unwraps either.
+ * dsh owns plugin settings as entry config: the loader validates the profile
+ * patch (or the settings page) with this schema and hands the resolved document
+ * to `apply()`. Resolution is not a plain-value pass-through: a `volatile()`
+ * field arrives as a live handle (`{ get() }`, cosmokit's `Volatile<T>`), so
+ * `apply()` takes `ResolvedApplyPatchSettings` while `ApplyPatchSettings` stays
+ * the plain shape of a hand-written document. Both are derived from the schema
+ * type below, so the document shape cannot drift from what is validated.
  *
  * The schema carries an explicit annotation because this repo's node_modules
  * holds several schemastery copies: the bare inferred type resolves through a
@@ -24,7 +24,7 @@ import {
   DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
   DEFAULT_DISABLE_EDIT,
   DEFAULT_DISABLE_WRITE,
-} from '../shared/config.js'
+} from '../shared/constants.js'
 
 /**
  * One `volatile()` config field as the loader hands it to `apply()`: a live
@@ -37,16 +37,27 @@ export interface LiveSettingsField<T> {
   get(): T
 }
 
+/** Plain settings document shape (a hand-written patch or a settings-page write). */
+export interface ApplyPatchSettings {
+  /** Hide the built-in `edit` tool (targeted text edits). */
+  disableEdit?: boolean | null
+  /** Hide the built-in `write` tool (whole-file creation/overwrite). */
+  disableWrite?: boolean | null
+  /**
+   * Allow Add/Move to overwrite a file the model never read, and Delete to
+   * remove one (Codex semantics, default). Disable to require a prior read.
+   */
+  allowUnobservedOverwrite?: boolean | null
+}
+
 /** The resolved document `apply()` receives: every switch is a live handle. */
 export type ResolvedApplyPatchSettings = {
-  disableEdit: LiveSettingsField<boolean>
-  disableWrite: LiveSettingsField<boolean>
-  allowUnobservedOverwrite: LiveSettingsField<boolean>
+  [K in keyof ApplyPatchSettings]-?: LiveSettingsField<boolean>
 }
 
 /**
  * The schema's own type: each switch is accepted as a plain boolean (nullable
- * before their defaults apply) and resolve to live handles above. Exported
+ * before their defaults apply) and resolves to live handles above. Exported
  * under a stable name so the declaration build can write it (see the module
  * note).
  *
@@ -55,14 +66,7 @@ export type ResolvedApplyPatchSettings = {
  * range starts at ^3.18.2. Omitting it defaults to `'plain'` — which is exactly
  * what this object schema is — on every supported version.
  */
-export type ApplyPatchSettingsSchemaType = z<
-  {
-    disableEdit?: boolean | null
-    disableWrite?: boolean | null
-    allowUnobservedOverwrite?: boolean | null
-  },
-  ResolvedApplyPatchSettings
->
+export type ApplyPatchSettingsSchemaType = z<ApplyPatchSettings, ResolvedApplyPatchSettings>
 
 /** Settings document schema: the two built-in-tool switches. */
 export const ApplyPatchSettingsSchema: ApplyPatchSettingsSchemaType = z.object({

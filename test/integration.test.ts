@@ -19,7 +19,8 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'no
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Plugin } from '@deepseek-ai/cordis'
+import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import { SandboxedFileSystem } from '@deepseek-ai/dsh-fs-sandbox'
@@ -29,13 +30,14 @@ import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import { apply as applyObservationPolicy } from '@deepseek-ai/dsh-fs-observation-policy'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { apply as applyPlugin, readSuppressed } from '../src/index.js'
+import { apply as applyPlugin, inject as pluginInject } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
-import { APPLY_PATCH_TOOL_NAME, SUPPRESSIBLE_TOOLS } from '../src/host/injector.js'
+import { APPLY_PATCH_TOOL_NAME, SUPPRESSIBLE_TOOLS, suppressedTools } from '../src/host/injector.js'
 
 /** Boot a composed context with the given sandbox mode + entry config. */
 async function boot(workspace: string, mode: string, entryConfig: Record<string, unknown>) {
   const ctx = new Context()
+  await ctx.plugin(AgentRegistry)
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(LocalSandboxProvider, {})
   await ctx.plugin(SandboxPolicyService, { mode: mode as never, workspaceRoot: workspace })
@@ -45,16 +47,17 @@ async function boot(workspace: string, mode: string, entryConfig: Record<string,
   await ctx.plugin(SystemPrompt, {})
   // alpha.2: SandboxPolicyService registers a sandboxMode session projection,
   // so the projection registry service must exist before it activates.
-  await ctx.plugin(SessionProjectionRegistry, {})
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(applyObservationPolicy)
   // dsh >= 0.1.7 wiring: the switches ride this entry's config, resolved
   // through the plugin's Config schema exactly as the loader does it (that
   // resolution turns each switch into a live volatile handle).
   await ctx.plugin({
     name: 'dsh-apply-patch',
-    inject: ['tools', 'fs', 'systemPrompt', 'sandboxPolicy'],
-    apply: (pluginCtx: Context) => applyPlugin(pluginCtx, ApplyPatchSettingsSchema(entryConfig) as never),
-  } as never)
+    // The plugin's own dependency list, so a missing inject entry fails here.
+    inject: [...pluginInject],
+    apply: (pluginCtx: Context) => applyPlugin(pluginCtx, ApplyPatchSettingsSchema(entryConfig)),
+  } as Plugin)
   return ctx
 }
 
@@ -114,30 +117,20 @@ describe('plugin apply', () => {
     // (`{ get() }`, non-enumerable, JSON `{}`), never as the value. Reading
     // `config.disableEdit` directly would therefore read a truthy object for
     // every state, so the switch could never be turned back off.
-    const resolved = ApplyPatchSettingsSchema({ disableEdit: false, disableWrite: true }) as unknown as {
-      disableEdit: unknown
-      disableWrite: unknown
-    }
+    const resolved = ApplyPatchSettingsSchema({ disableEdit: false, disableWrite: true })
     assert.equal(typeof resolved.disableEdit, 'object', 'the schema wraps the field in a cell')
-    assert.ok(
-      Symbol.for('cosmokit.volatile.write') in (resolved.disableEdit as object),
-      'the cell carries cosmokit\'s registered symbol',
-    )
-    assert.deepEqual([...readSuppressed(resolved as never)], ['write'], 'cells are unwrapped')
-    // Plain values (hand-built patches, hosts that resolve the config without
-    // the volatile wrapper), defaults, and unusable values keep working.
-    assert.deepEqual([...readSuppressed({ disableEdit: false, disableWrite: false })], [])
-    assert.deepEqual([...readSuppressed(undefined)], ['edit', 'write'])
-    assert.deepEqual([...readSuppressed({ disableEdit: 'nonsense' } as never)], ['edit', 'write'])
-    // The memoized set must follow the live cells of one config object.
+    assert.equal(resolved.disableEdit.get(), false)
+    assert.deepEqual([...suppressedTools(resolved)], ['write'])
+    assert.deepEqual([...suppressedTools(ApplyPatchSettingsSchema({}))], ['edit', 'write'])
     let edit = true
     const live = {
       disableEdit: { get: () => edit },
       disableWrite: { get: () => true },
+      allowUnobservedOverwrite: { get: () => true },
     }
-    assert.deepEqual([...readSuppressed(live as never)], ['edit', 'write'])
+    assert.deepEqual([...suppressedTools(live)], ['edit', 'write'])
     edit = false
-    assert.deepEqual([...readSuppressed(live as never)], ['write'], 'the cache follows the live cells')
+    assert.deepEqual([...suppressedTools(live)], ['write'])
   })
 })
 
@@ -153,13 +146,18 @@ describe('built-in tool suppression', () => {
    */
   const BUILTIN = ['edit', 'write'] as const
 
+  /**
+   * Drive the REAL waterfall with an assembly holding the built-ins, and return
+   * the names the model would be offered. Hiding happens in the assembly, so the
+   * registry view is deliberately not the measured surface.
+   */
   async function assembleTools(ctx: Context): Promise<string[]> {
+    for (const name of ['read', ...BUILTIN]) registerStubTool(ctx, name)
     const assembly = {
-      tools: [
-        { name: APPLY_PATCH_TOOL_NAME },
-        { name: 'read' },
-        ...BUILTIN.map((name) => ({ name })),
-      ],
+      tools: [APPLY_PATCH_TOOL_NAME, 'read', ...BUILTIN].map(name => ({ name })),
+      sections: [],
+      contexts: [],
+      variables: {},
     }
     const out = await ctx.waterfall(
       'system-prompt/assemble',
@@ -167,7 +165,7 @@ describe('built-in tool suppression', () => {
       { agent: undefined } as never,
       () => Promise.resolve(assembly as never),
     )
-    return (out as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name)
+    return (out as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
   }
 
   it('hides both built-in editing tools by default', async () => {
