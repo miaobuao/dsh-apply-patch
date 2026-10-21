@@ -1,0 +1,414 @@
+/*
+ * Styles for the dedicated `apply_patch` Chat row.
+ *
+ * The header follows the shell's disclosure-row geometry and color ramp (24px
+ * line, tertiary label that lifts to secondary on hover, a leading icon that
+ * swaps to a downward chevron on hover and an upward one while open). The diff
+ * preview follows the shell's diff card (code-block surface, full-bleed added
+ * and removed lines). Everything is expressed with `--dsw-alias-*`/`--dsw-*`
+ * tokens so light/dark switching and host typography apply, and every selector
+ * stays under the plugin's `ap-tool-` prefix.
+ */
+
+/* header */
+
+.ap-tool {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.ap-tool-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/*
+ * Once expanded the header sticks to the top of the conversation scroll
+ * container while this card's own body scrolls past underneath — the same
+ * treatment the shell's reasoning and compaction blocks use. The base
+ * background keeps the scrolling body from showing through.
+ */
+.ap-tool[data-open] > .ap-tool-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--dsw-alias-bg-base, transparent);
+}
+
+.ap-tool-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  height: calc(24px + var(--dsh-content-font-delta, 0px));
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+  transition: color 0.1s ease;
+}
+
+.ap-tool-row:is(:hover, :focus-visible) {
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.9));
+}
+
+.ap-tool-row:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #4d6bfe);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.ap-tool-leading {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(16px + var(--dsh-content-font-delta, 0px));
+  height: calc(16px + var(--dsh-content-font-delta, 0px));
+  margin-right: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+.ap-tool-leading svg {
+  width: calc(14px + var(--dsh-content-font-delta, 0px));
+  height: calc(14px + var(--dsh-content-font-delta, 0px));
+}
+
+.ap-tool-icon-idle {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 0.1s ease;
+}
+
+.ap-tool-chevron-hover {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.ap-tool-row:is(:hover, :focus-visible) .ap-tool-icon-idle {
+  opacity: 0;
+}
+
+.ap-tool-row:is(:hover, :focus-visible) .ap-tool-chevron-hover {
+  opacity: 1;
+}
+
+.ap-tool-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-weight: 400;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.ap-tool-sep {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.6));
+}
+
+.ap-tool-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: inherit;
+}
+
+.ap-tool-summary-error {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+.ap-tool-stat {
+  flex: none;
+  margin-left: 10px;
+  white-space: nowrap;
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  color: inherit;
+}
+
+.ap-tool-added,
+.ap-tool-removed {
+  color: inherit;
+}
+
+.ap-tool-row:is(:hover, [aria-expanded='true']) .ap-tool-added {
+  color: var(--dsw-alias-state-success-primary, #2f9e44);
+}
+
+.ap-tool-row:is(:hover, [aria-expanded='true']) .ap-tool-removed {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+/* expanded body */
+
+.ap-tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta, 0px));
+}
+
+.ap-tool-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-tool-op {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ap-tool-op-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  /*
+   * The operation line belongs to the diff-card family, not the chat body:
+   * host diff paths and lines use the code face at the small size. Without
+   * this, the path inherits the 14px conversation type and reads oversized.
+   */
+  font: var(--dsw-font-markdown-code-block, 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.ap-tool-badge {
+  flex: none;
+  width: 16px;
+  margin-right: 6px;
+  text-align: center;
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+.ap-tool-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  color: var(--dsw-alias-label-secondary, inherit);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: underline 1px dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ap-tool-move {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.ap-tool-arrow {
+  flex: none;
+  margin: 0 4px;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+.ap-tool-op-stat {
+  margin-left: 10px;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.ap-tool-op .ap-tool-added {
+  color: var(--dsw-alias-state-success-primary, #2f9e44);
+}
+
+.ap-tool-op .ap-tool-removed {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+.ap-tool-op-state {
+  flex: none;
+  margin-left: 8px;
+  white-space: nowrap;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+.ap-tool-op[data-state='notApplied'] .ap-tool-path {
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+  text-decoration: none;
+}
+
+/* diff preview: the shell diff-card surface with full-bleed change lines */
+
+.ap-tool-diff {
+  margin: 2px 0 3px 22px;
+  border-radius: var(--dsw-radius-lg, 8px);
+  background: var(--dsw-alias-markdown-code-block, rgba(128, 128, 128, 0.06));
+  font: var(--dsw-font-markdown-code-block, 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow: hidden;
+}
+
+.ap-tool-diff-body {
+  padding: 4px 0;
+  max-height: 240px;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.ap-tool-diff-line {
+  min-height: 1lh;
+  padding: 0 12px;
+  white-space: pre;
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+
+.ap-tool-diff-add::before {
+  content: '+ ';
+}
+
+.ap-tool-diff-remove::before {
+  content: '- ';
+}
+
+.ap-tool-diff-context::before {
+  content: '  ';
+}
+
+.ap-tool-diff-add {
+  color: var(--dsw-alias-state-success-primary, #2f9e44);
+  background: var(--dsw-alias-code-diff-added, rgba(47, 158, 68, 0.12));
+  box-shadow: inset 3px 0 0 var(--dsw-alias-state-success-primary, #2f9e44);
+}
+
+.ap-tool-diff-remove {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+  background: var(--dsw-alias-code-diff-deleted, rgba(229, 72, 77, 0.12));
+  box-shadow: inset 3px 0 0 var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+.ap-tool-diff-context {
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+
+/* The middle of a long diff folds behind these two controls. */
+
+.ap-tool-diff-fold,
+.ap-tool-diff-collapse {
+  display: block;
+  width: 100%;
+  min-height: 1lh;
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+  cursor: pointer;
+}
+
+.ap-tool-diff-collapse {
+  border-top: 0.5px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.25));
+}
+
+.ap-tool-diff-fold:hover,
+.ap-tool-diff-collapse:hover {
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+
+.ap-tool-more {
+  margin: 0 0 2px 22px;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+/* messages and actions */
+
+.ap-tool-empty {
+  margin: 0;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+}
+
+.ap-tool-note {
+  margin: 0;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: 18px;
+  color: var(--dsw-alias-state-warn-primary, #f08c00);
+}
+
+.ap-tool-error {
+  margin: 2px 0 0;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-markdown-code-block-small, 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+.ap-tool-inspect {
+  align-self: flex-start;
+  margin: 4px 0 2px;
+  padding: 2px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.3));
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-base, transparent);
+  color: var(--dsw-alias-label-secondary, inherit);
+  font: inherit;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.ap-tool-inspect:hover {
+  background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 128, 0.1));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+.ap-tool-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

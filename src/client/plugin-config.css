@@ -2,7 +2,7 @@
  * Styles for the Apply Patch configuration section in the Plugins center.
  *
  * The section renders inside the bundle page's content column: a header (title
- * plus a one-line summary) above two switch rows, followed by the save/error
+ * plus a one-line summary) above three switch rows, followed by the save/error
  * status. Colors and radii follow the built-in settings language.
  */
 
@@ -91,4 +91,61 @@
 
 .ap-config-status-error {
   color: var(--dsw-alias-label-error, #c62828);
+}
+
+/*
+ * Switch row control.
+ *
+ * Reproduced from the shell's own switch (36x20 track, 16px thumb, 2px inset,
+ * 16px travel, 0.12s ease) because a plugin may not load a Harness Client
+ * package as a module. The first token in each declaration is the exact token
+ * the shell uses; the fallback is the equivalent catalogued alias, so a renamed
+ * or absent token degrades instead of leaving the control unstyled.
+ */
+
+.ap-switch {
+  box-sizing: border-box;
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-border-l3, var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.4)));
+  cursor: pointer;
+}
+
+.ap-switch[aria-checked='true'] {
+  background: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+
+.ap-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ap-switch:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid
+    var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary, #4d6bfe));
+  outline-offset: 2px;
+}
+
+.ap-switch-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-base, #fff));
+  transition: transform 0.12s ease;
+}
+
+.ap-switch[aria-checked='false'] .ap-switch-thumb {
+  background: var(--dsw-alias-switch-thumb, var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.8)));
+}
+
+.ap-switch[aria-checked='true'] .ap-switch-thumb {
+  transform: translate(16px);
 }

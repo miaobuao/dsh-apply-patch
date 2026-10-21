@@ -7,59 +7,26 @@
  * settings sidebar. Content: two switches that hide DSH's built-in `edit` and
  * `write` tools while the plugin's `apply_patch` tool stays enabled, plus the
  * `allowUnobservedOverwrite` policy switch. Writes go through the client
- * `configForms` scope (the transport the built-in pages use), so a flip
- * restarts the host entry with the new switches.
+ * `configForms` scope; the Host reads its volatile settings at use time.
  */
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 type ClientContext = Context
-import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { Switch } from './switch'
 import {
   DEFAULT_ALLOW_UNOBSERVED_OVERWRITE,
   DEFAULT_DISABLE_EDIT,
   DEFAULT_DISABLE_WRITE,
 } from '../shared/constants'
 import { LOCALE_NS } from './locales'
-import './plugin-config.css'
-
-/** One write in the client config-form protocol (`settings/mutate` ops). */
-export type ConfigFormOp =
-  | { op: 'set'; path: string[]; value: unknown }
-  | { op: 'unset'; path: string[] }
+import styles from './plugin-config.css'
 
 /** Effective settings document as the bound form projects it. */
 export interface ApplyPatchConfigValue {
   disableEdit?: boolean
   disableWrite?: boolean
   allowUnobservedOverwrite?: boolean
-}
-
-/** Snapshot of one bound client config form. */
-export interface ConfigFormSnapshot {
-  status?: string
-  writable: boolean
-  /** Effective document (the stored override merged over the composition default). */
-  value?: ApplyPatchConfigValue | undefined
-  /** Optimistic-concurrency revision this read is based on. */
-  revision?: unknown
-  [key: string]: unknown
-}
-
-/**
- * Bound client config form — the `configForms.get(<entry id>)` scope.
- *
- * dsh 0.1.7 replaced the old `settingsScope` service with `configForms`: the
- * scope is bound by entry id (not namespace) and writes ride
- * `mutate(ops, revision)` instead of `set(field, value)`. Declared structurally
- * because this package's devDependency typings predate it; keep in sync with
- * the `configForms` scope the official settings pages bind.
- */
-export interface ConfigFormScopeFace {
-  getSnapshot(): ConfigFormSnapshot
-  subscribe(listener: () => void): () => void
-  /** @returns false when the write was rejected as stale (revision moved on). */
-  mutate(ops: ConfigFormOp[], revision?: unknown): Promise<boolean>
 }
 
 /** Props the plugin center's bundle page supplies to a configuration section. */
@@ -70,27 +37,20 @@ export interface PluginConfigViewProps {
 
 /** The inject face this page receives from its registration. */
 export interface ApplyPatchConfigFace {
-  scope: ConfigFormScopeFace
+  scope: ConfigForm<ApplyPatchConfigValue>
 }
 
 export interface ApplyPatchConfigProps extends PluginConfigViewProps, ApplyPatchConfigFace {}
 
 /** Build the page component bound to the client locale service. */
 export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConfigProps) => JSX.Element | null {
-  const t: Translate = (() => {
-    try {
-      return ctx.locale.bind(LOCALE_NS) as unknown as Translate
-    } catch {
-      return (key: string) => key
-    }
-  })()
+  const t = ctx.locale.bind(LOCALE_NS)
 
   return function ApplyPatchConfig(props: ApplyPatchConfigProps): JSX.Element | null {
     const { scope, view } = props
-    const snapshot = useSyncExternalStore(
-      (listener) => scope.subscribe(listener),
-      () => scope.getSnapshot(),
-    )
+    const subscribe = useCallback((listener: () => void) => scope.subscribe(listener), [scope])
+    const getSnapshot = useCallback(() => scope.getSnapshot(), [scope])
+    const snapshot = useSyncExternalStore(subscribe, getSnapshot)
     const [busy, setBusy] = useState(false)
     const [saved, setSaved] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -109,8 +69,7 @@ export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConf
       try {
         // Write against the revision this render was based on: the host rejects a
         // stale write instead of silently overwriting a concurrent change.
-        const revision = scope.getSnapshot().revision
-        const landed = await scope.mutate([{ op: 'set', path: [field], value: next }], revision)
+        const landed = await scope.mutate([{ op: 'set', path: [field], value: next }], snapshot.revision)
         if (!landed) throw new Error(t('saveConflict'))
         setSaved(true)
       } catch (cause) {
@@ -118,10 +77,13 @@ export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConf
       } finally {
         setBusy(false)
       }
-    }, [scope, t])
+    }, [scope, t, snapshot.revision])
 
     if (snapshot.status === 'unavailable') return null
-    const writable = snapshot.writable
+    // `writable` is false while the first Host document is still arriving, so the
+    // read-only notice is tied to a ready document instead of to a missing one.
+    const loading = snapshot.status === 'loading'
+    const writable = snapshot.status === 'ready' && snapshot.writable
 
     // The bundle page asks for `summary` when it lists the section elsewhere and
     // `page` for the real form; this page only ever contributes the form.
@@ -129,12 +91,13 @@ export function makeApplyPatchConfig(ctx: ClientContext): (props: ApplyPatchConf
 
     return (
       <div className="ap-config">
+        <style>{styles}</style>
         <header className="ap-config-head">
           <h3 className="ap-config-title">{t('sectionTitle')}</h3>
           <p className="ap-config-sub">{t('sectionSub')}</p>
         </header>
         <div className="ap-config-body">
-          {!writable && (
+          {!loading && !writable && (
             <p className="ap-config-readonly" role="status">{t('readOnly')}</p>
           )}
           <div className="ap-toggle-field">

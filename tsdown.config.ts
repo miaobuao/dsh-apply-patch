@@ -8,10 +8,11 @@
  * with the package-name id `dsh-apply-patch` (the client-modules compose
  * keys on the package name; keep it in sync with package.json `name`).
  * Externals resolve through the loader module table at runtime; everything
- * else is inlined. CSS files are inlined as <style data-plugin> tags.
+ * else is inlined. A CSS import becomes a string default export that the
+ * component renders itself.
  */
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, relative, resolve as resolvePath, sep } from 'node:path'
+import { dirname, relative, resolve as resolvePath, sep } from 'node:path'
 import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
@@ -24,18 +25,18 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map(id => `node:${id}`),
 ])
 
-/** Module specifiers the web shell shares into the frozen module table. */
+/**
+ * Module specifiers this bundle requires at runtime and the web shell shares
+ * into its frozen module table.
+ *
+ * The same list is the purity gate's allowlist, so it holds only what the
+ * client half actually imports: React today. Adding a package here to silence a
+ * resolution error would let a cross-plugin value import into the bundle —
+ * collaborate through Cordis services instead, and let the gate fail.
+ */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
-  'react-dom',
-  'react-dom/client',
-  'cordis',
-  '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
-  '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /** Wire/type layers a client bundle may inline (browser-safe contract surfaces). */
@@ -46,22 +47,6 @@ const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('.', import.meta.url))
-
-/** The style-injection prologue shared by css loads. */
-function injectTag(pluginId: string, fileId: string, cssText: string): string {
-  const tagId = `${pluginId}/${basename(fileId)}`
-  return [
-    `const css = ${JSON.stringify(cssText)};`,
-    `const tagId = ${JSON.stringify(tagId)};`,
-    `if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {`,
-    `  const tag = document.createElement('style');`,
-    `  tag.dataset.plugin = ${JSON.stringify(pluginId)};`,
-    `  tag.dataset.pluginCss = tagId;`,
-    `  tag.textContent = css;`,
-    `  document.head.appendChild(tag);`,
-    `}`,
-  ].join('\n')
-}
 
 /** Rebase a physical lib-relative source onto the repository-shaped URL tree. */
 function browserSourcePath(source: string, sourcemapPath: string): string {
@@ -97,7 +82,7 @@ function purityGatePlugin(): BuildPlugin {
 }
 
 /** The shared CSS-inline virtual-module plugin (one <style data-plugin> per file). */
-function makeCssPlugin(pluginId: string): BuildPlugin {
+function makeCssPlugin(): BuildPlugin {
   return {
     name: 'dsh-css-inline',
     resolveId(source: string, importer: string | undefined) {
@@ -115,16 +100,17 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
       const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
       this.addWatchFile(fileId)
       const source = await readFile(fileId)
-      return [
-        injectTag(pluginId, fileId, source.toString('utf8')),
-        'export default "";',
-      ].join('\n')
+      return `export default ${JSON.stringify(source.toString('utf8'))};`
     },
   }
 }
 
-/** One client bundle build for the official profile channel. */
-function clientBundle(pluginId: string, entryFile: string): UserConfig {
+/**
+ * One client bundle build for the official profile channel.
+ * @param pluginId - loader factory id; the package name the client-modules compose keys on.
+ * @param outputFile - emitted artifact name inside `lib` (`dsh.client` accepts one client entry, so the entry itself is fixed).
+ */
+function clientBundle(pluginId: string, outputFile: string): UserConfig {
   return {
     entry: { client: 'src/client/index.tsx' },
     outDir: 'lib',
@@ -133,7 +119,11 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     dts: false,
     sourcemap: true,
     clean: false,
-    external: [...CLIENT_EXTERNALS],
+    deps: {
+      // Platform modules stay out of the bundle; everything else is inlined.
+      neverBundle: [...CLIENT_EXTERNALS],
+      alwaysBundle: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
+    },
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
@@ -145,10 +135,9 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
         conditionNames: ['browser', 'import', 'require', 'default'],
       },
     },
-    noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [purityGatePlugin(), makeCssPlugin(pluginId)],
+    plugins: [purityGatePlugin(), makeCssPlugin()],
     outputOptions: {
-      entryFileNames: entryFile,
+      entryFileNames: outputFile,
       sourcemapPathTransform: browserSourcePath,
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(pluginId)}, factory: (require) => {`,
       footer: 'return module.exports; } });',

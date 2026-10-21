@@ -1,11 +1,17 @@
 /**
- * Locale dictionaries for the apply-patch page in the Plugins center.
+ * Locale dictionaries for this plugin's Client surfaces.
  *
- * The page is a bundle configuration section (`plugins.bundle.config`): the
- * plugin itself is always enabled, so the copy explains what the switches do
- * rather than whether to enable anything.
+ * `settings.applyPatch` is the bundle configuration section in the Plugins
+ * center (`plugins.bundle.config`): the plugin itself is always enabled, so
+ * the copy explains what the switches do rather than whether to enable
+ * anything. `applyPatch.tool` is the dedicated Chat row for the `apply_patch`
+ * Tool call (`tool.call.toolview`), which renders the patch as ordered file
+ * operations instead of its raw argument text.
  */
 export const LOCALE_NS = 'settings.applyPatch'
+
+/** Namespace of the `apply_patch` Tool call row. */
+export const TOOL_LOCALE_NS = 'applyPatch.tool'
 
 export const zh = {
   sectionTitle: '内置文件编辑工具',
@@ -37,4 +43,67 @@ export const en = {
   saveFailed: 'Save failed: {message}',
   saveConflict: 'Configuration changed elsewhere; try again.',
   readOnly: 'This deployment is read-only; configuration cannot be changed.',
+} as const
+
+/**
+ * `apply_patch` Tool row copy.
+ *
+ * The row shows the parsed file operations in patch order, their diff totals,
+ * and the settled verdict; the locale owner is the same plugin, so the
+ * namespace is declared here beside the settings dictionary.
+ */
+export const toolZh = {
+  toolTitle: '应用补丁',
+  toolPreparing: '接收补丁…',
+  toolNoOperations: '没有文件操作',
+  toolInvalid: '补丁语法无法解析',
+  pathSeparator: '、',
+  titleAdd: '新增 {path}',
+  titleUpdate: '更新 {path}',
+  titleDelete: '删除 {path}',
+  titleMove: '移动 {path} → {to}',
+  titleAddMany: '新增 {count} 个文件 · {paths}',
+  titleUpdateMany: '更新 {count} 个文件 · {paths}',
+  titleDeleteMany: '删除 {count} 个文件 · {paths}',
+  titleMoveMany: '移动 {count} 个文件 · {paths}',
+  titleEditMany: '修改 {count} 个文件 · {paths}',
+  toolApplied: '已应用',
+  toolUnapplied: '未执行',
+  toolAppliedCount: '已应用 {applied}/{total}',
+  diffExpand: '展开 {count} 行',
+  diffCollapse: '收起',
+  toolMoreLines: '还有 {count} 行',
+  toolInspect: '查看调用',
+  toolStatusPreparing: '准备中',
+  toolStatusRunning: '执行中',
+  toolStatusSucceeded: '已应用',
+  toolStatusFailed: '失败',
+} as const
+
+export const toolEn = {
+  toolTitle: 'Apply patch',
+  toolPreparing: 'Receiving patch…',
+  toolNoOperations: 'No file operations',
+  toolInvalid: 'Unreadable patch syntax',
+  pathSeparator: ', ',
+  titleAdd: 'Add {path}',
+  titleUpdate: 'Update {path}',
+  titleDelete: 'Delete {path}',
+  titleMove: 'Move {path} → {to}',
+  titleAddMany: 'Add {count} files · {paths}',
+  titleUpdateMany: 'Update {count} files · {paths}',
+  titleDeleteMany: 'Delete {count} files · {paths}',
+  titleMoveMany: 'Move {count} files · {paths}',
+  titleEditMany: 'Edit {count} files · {paths}',
+  toolApplied: 'Applied',
+  toolUnapplied: 'Not applied',
+  toolAppliedCount: '{applied}/{total} applied',
+  diffExpand: 'Show {count} lines',
+  diffCollapse: 'Collapse',
+  toolMoreLines: '{count} more lines',
+  toolInspect: 'Inspect call',
+  toolStatusPreparing: 'Preparing',
+  toolStatusRunning: 'Running',
+  toolStatusSucceeded: 'Applied',
+  toolStatusFailed: 'Failed',
 } as const
