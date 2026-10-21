@@ -1,5 +1,85 @@
 # 变更记录
 
+## 0.1.0 - 2026-10-21
+
+本次更新重做内置工具隐藏、补齐删除/移动的失败保证、新增 `apply_patch` 的专用
+工具调用卡片，并收窄宿主版本范围。0.1.0 是首个正式版本，发布到 npm 的
+`latest` dist-tag。
+
+### 新增
+
+- 对话中的 `apply_patch` 调用改用专用卡片（`tool.call.toolview` 槽位的
+  `apply_patch` 键），不再显示通用工具卡片的原始 patch 文本：
+  - 折叠行的标题由补丁动作与文件名生成：单文件为「更新 src/a.ts」「新增
+    src/b.ts」「删除 old.txt」「移动 a.ts → b.ts」，多文件按动作聚合为
+    「更新 3 个文件 · src/a.ts、src/b.ts、src/c.ts」（全部文件名按补丁顺序
+    列出，单行放不下时省略号截断）或混合时「修改 3 个文件 · …」；同时显示
+    总 `+A -R` 行数；
+  - 展开行按补丁顺序列出每个文件操作（`A` 新增 / `M` 更新 / `D` 删除 /
+    `M →` 移动），路径可点击打开，并附带该操作的 diff 与行数；长 diff 默认折叠
+    中间，首尾各保留 3 行变化行（外侧再带 1 行上下文），折叠视图不会只剩上下文
+    行；点击「展开 N 行」展开、再「收起」折回；
+  - 运行中随 `patch` 参数流式列出已经出现的操作，结束后按结果标注
+    「已应用 / 未执行」；失败时显示错误原文与「已应用 x/y」；
+  - 表头沿用宿主的 disclosure 交互：悬停时前置文件图标换成向下箭头，展开后显示
+    向上箭头，行文字从 `label-tertiary` 提升到 `label-secondary`；展开的表头在
+    滚动长卡片时吸顶（与 reasoning 块同一实现）；diff 行沿用宿主 diff 卡的
+    `markdown-code-block` / `code-diff-added` / `code-diff-deleted` 配色；
+  - 前置图标改为自绘的「补丁文档」字形：一页纸 + 一条新增标线与一条删除标线，
+    替代普通文件图标与宿主 compare-split 字形；按宿主 regular 图标规格绘制
+    （16px viewBox、1px 描边、圆头端点、14px 渲染）；
+  - 卡片只从会话日志记录的调用参数与结果推导，历史会话回放同样生效；客户端
+    半边不导入其它 Harness Client 包，样式只使用 `--dsw-alias-*` 主题 token。
+- 新增共享的容错 patch 扫描器（`src/shared/patch-preview.ts`）与其回归用例：
+  流式半截输入不抛错，计数精确，预览行数有上限；Host 侧的严格解析语义不变。
+
+### Breaking
+
+- 隐藏内置 `edit` / `write` 改为「装配过滤 + 按名守卫」，两者都按工具名工作。
+  - 装配过滤同时移除同名引导段落；此前只过滤工具清单，`tool:edit` / `tool:write`
+    段落会残留在提示里，让模型看到已经不能调用的工具说明。
+  - 守卫按名拒绝任何调用（含带 agent 作用域的调用），不再只是拒绝无作用域的直接调用。
+  - 不使用 `ctx.tools.restrict`：实际部署中 `@deepseek-ai/dsh-tool-fs` 由 agent preset
+    挂载，工具注册在 agent 作用域，而限制只能遮住继承的全局工具。
+  - 开关值按使用时读取，改开关在下一个步骤生效，不重启插件。
+- peer 范围收窄：`@deepseek-ai/dsh-*` 由
+  `^0.1.2-alpha.2 || ^0.2.0-rc.1 || ^0.2.1-alpha.1` 收窄为 `^0.2.1-alpha.1`，
+  `@deepseek-ai/cordis` 由 `^4.0.1` 收窄为 `~4.0.5-alpha.1`。`0.1.x` 宿主不再声明支持
+  （客户端设置页需要 `configForms`，宿主侧需要 `system-prompt/assemble` 与 `tools.guard`）。
+- 失败改为结构化 `ApplyFailure`（`stage` / `applied` / `affected` / `code` / `landedAt` /
+  `removal`）。`stage` 取 `resolve` / `add` / `delete` / `read` / `derive` / `verify` /
+  `update` / `move-write` / `move-remove`。曾按原始错误类型（如 `FsError`）或直接拼接
+  `error.message` 判断失败的调用方，需改为读取字段；已有改动生效时，错误消息仍保留
+  “Applied before the failure:” 列表。
+
+### Behavior
+
+- `Move to` 在写目标之前预检沙盒 shell；缺少 shell 时不再留下“目标已写、源未删”的半完成
+  状态。
+- `Move to` 目标已写入而源删除未确认时：未启动删除（`removal.outcome ===
+  'not-started'`）说明源文件仍在原处；已请求但无法确认时说明源删除未确认、要求在重试前
+  检查两个路径，结果未知（`'unknown'`）时另附
+  “Removal outcome is unknown for `<path>`…”。
+- `Update File` 在读取后、写入前再取一次版本；期间文件被外部改动时以 `FS_STALE_VERSION`
+  失败，且不记录读取观察。
+- 删除在 `rm` 前再取一次版本：`Delete File` 仅严格模式校验，`Move to` 两种模式都校验
+  源文件版本；缩小（而不消除）“检查后删除”的竞态窗口。
+- Host 直接读取 volatile 配置（`config.<field>.get()`），移除私有符号探测、解包兜底与
+  模块级缓存。
+- 客户端开关按宿主控件复刻（`<button role="switch">` + 拇指 span、36×20 轨道、
+  16px 拇指、`aria-checked` 驱动选中态），并只使用 `--dsw-alias-*` 主题 token；
+  不再导入 `@deepseek-ai/dsh-client-ui-primitives`。
+
+### Tooling
+
+- `CLIENT_EXTERNALS` 裁剪为客户端半边实际导入的 `react` 与 `react/jsx-runtime`；该表同时
+  是客户端 bundle 纯度门禁的白名单。
+- CSS 改为导出字符串、由组件渲染 `<style>`，样式随组件挂载与卸载。
+- 新增 `verify:manifest` 脚本（`scripts/verify-manifest.mjs`）：校验发布清单与构建产物
+  是否一致（入口 / `exports` / `files`、客户端 bundle 的 loader id、bundle 是否引入平台
+  模块表之外的依赖、声明中的运行时导入是否已声明，以及每个 `@deepseek-ai/dsh-*` peer 是否
+  仍覆盖本包所写的 API 代际）。
+
 ## 0.0.1-alpha.2 - 2026-10-20
 
 本次更新集中修复静态分析发现的正确性、架构与性能问题，并新增覆盖策略开关。
