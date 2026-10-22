@@ -45,4 +45,10 @@ describe('diffCanvasColumns', () => {
     // "abc" (3) + tab (to column 8) + "de" (2) = 10 columns, plus slack.
     assert.equal(diffCanvasColumns(['abc\tde'], 0), 16)
   })
+
+  it('counts East Asian wide characters as two columns', () => {
+    // Four CJK characters occupy eight narrow cells in a terminal font.
+    assert.equal(diffCanvasColumns(['中文字符'], 0), 14)
+    assert.equal(diffCanvasColumns(['a中b'], 0), 10)
+  })
 })
