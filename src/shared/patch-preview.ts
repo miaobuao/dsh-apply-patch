@@ -107,6 +107,14 @@ export interface ScanPatchOptions {
   readonly allowIncomplete?: boolean
   /** Per-operation preview line budget; defaults to {@link DEFAULT_PREVIEW_LINE_LIMIT}. */
   readonly lineLimit?: number
+  /**
+   * Retain preview line text (default `true`). Pass `false` for a count-only
+   * scan: `added`, `removed`, and `lineCount` stay exact, while `lines` and
+   * `chunks` stay empty and no per-line strings or objects are allocated. A
+   * collapsed view can therefore read operations and totals without
+   * materializing the patch body, and scan again with lines when it expands.
+   */
+  readonly retainLines?: boolean
 }
 
 /** One mutable operation while the scanner walks the lines. */
@@ -135,6 +143,7 @@ interface PreviewChunkInternal {
  */
 export function scanPatchPreview(text: string, options: ScanPatchOptions = {}): PatchPreview {
   const allowIncomplete = options.allowIncomplete ?? false
+  const retainLines = options.retainLines ?? true
   const lineLimit = Math.max(1, options.lineLimit ?? DEFAULT_PREVIEW_LINE_LIMIT)
   const operations: MutableOperation[] = []
   const lines = text.split('\n')
@@ -146,17 +155,25 @@ export function scanPatchPreview(text: string, options: ScanPatchOptions = {}): 
   const reject = (): void => {
     if (!allowIncomplete) invalid = true
   }
-  const pushLine = (operation: MutableOperation, target: PreviewLine[], line: PreviewLine): void => {
+  const pushLine = (
+    operation: MutableOperation,
+    target: PreviewLine[] | null,
+    kind: PreviewLine['kind'],
+    raw: string,
+  ): void => {
     operation.lineCount += 1
-    if (target.length < lineLimit) target.push(line)
+    if (!retainLines || target === null) return
+    if (target.length < lineLimit) target.push({ kind, text: raw.slice(1) })
     else operation.truncated = true
   }
-  const openChunk = (context: string | null): PreviewChunkInternal => {
+  const openChunk = (context: string | null): PreviewChunkInternal | null => {
+    if (!retainLines) return null
     const chunk: PreviewChunkInternal = { context, lines: [] }
     current!.chunks.push(chunk)
     return chunk
   }
-  const activeChunk = (): PreviewChunkInternal => current!.chunks[current!.chunks.length - 1] ?? openChunk(null)
+  const activeChunk = (): PreviewChunkInternal | null =>
+    retainLines ? current!.chunks[current!.chunks.length - 1] ?? openChunk(null) : null
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index]!.endsWith('\r') ? lines[index]!.slice(0, -1) : lines[index]!
@@ -227,7 +244,7 @@ export function scanPatchPreview(text: string, options: ScanPatchOptions = {}): 
         reject()
         continue
       }
-      pushLine(operation, operation.lines, { kind: 'add', text: raw.slice(1) })
+      pushLine(operation, operation.lines, 'add', raw)
       operation.added += 1
       continue
     }
@@ -239,7 +256,7 @@ export function scanPatchPreview(text: string, options: ScanPatchOptions = {}): 
     }
 
     if (raw === '') {
-      pushLine(operation, activeChunk().lines, { kind: 'context', text: '' })
+      pushLine(operation, activeChunk()?.lines ?? null, 'context', '')
       continue
     }
     const marker = raw[0]
@@ -247,11 +264,7 @@ export function scanPatchPreview(text: string, options: ScanPatchOptions = {}): 
       reject()
       continue
     }
-    const target = activeChunk()
-    pushLine(operation, target.lines, {
-      kind: marker === '+' ? 'add' : marker === '-' ? 'remove' : 'context',
-      text: raw.slice(1),
-    })
+    pushLine(operation, activeChunk()?.lines ?? null, marker === '+' ? 'add' : marker === '-' ? 'remove' : 'context', raw)
     if (marker === '+') operation.added += 1
     else if (marker === '-') operation.removed += 1
   }

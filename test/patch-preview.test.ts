@@ -86,6 +86,33 @@ describe('scanPatchPreview', () => {
     assert.equal(operation.truncated, true)
   })
 
+  it('can count without retaining line text', () => {
+    const preview = scanPatchPreview(wrap([
+      '*** Update File: src/a.ts',
+      '@@',
+      ' same',
+      '-old',
+      '+new',
+      '*** Add File: src/b.ts',
+      '+one',
+      '+two',
+      '*** Delete File: old.txt',
+    ].join('\n')), { retainLines: false })
+
+    const [update, add, remove] = preview.operations
+    assert.ok(update !== undefined && update.kind === 'update')
+    assert.equal(update.added, 1)
+    assert.equal(update.removed, 1)
+    assert.equal(update.lineCount, 3)
+    assert.deepEqual(update.chunks, [])
+    assert.ok(add !== undefined && add.kind === 'add')
+    assert.equal(add.added, 2)
+    assert.equal(add.lineCount, 2)
+    assert.deepEqual(add.lines, [])
+    assert.ok(remove !== undefined && remove.kind === 'delete')
+    assert.equal(remove.lineCount, 0)
+  })
+
   it('carries a Move to destination on the update operation', () => {
     const preview = scanPatchPreview(wrap([
       '*** Update File: src/from.ts',

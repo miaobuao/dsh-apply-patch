@@ -15,7 +15,9 @@
 import { useMemo, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { APPLY_PATCH_TOOL_NAME } from '../shared/constants'
+import { diffCanvasColumns, diffWindow } from '../shared/diff-window'
 import {
+  DEFAULT_PREVIEW_LINE_LIMIT,
   scanPatchPreview,
   type PatchPreview,
   type PreviewLine,
@@ -77,6 +79,18 @@ const DIFF_CHANGE_EDGE = 3
 /** Hidden-line count worth folding; below it the change window is shown whole. */
 const DIFF_MIN_HIDDEN = 3
 
+/** Rendered height of one diff row; keep in sync with `.ap-tool-diff-line`. */
+const DIFF_LINE_HEIGHT = 18
+
+/** Height of the scrolling diff viewport; keep in sync with `.ap-tool-diff-body`. */
+const DIFF_VIEWPORT_HEIGHT = 240
+
+/** Rows rendered beyond the visible window on each side. */
+const DIFF_OVERSCAN = 6
+
+/** Line count below which the expanded diff renders without windowing. */
+const DIFF_VIRTUAL_MIN = 80
+
 /** Marker the Host writes before the applied-when-failed list. */
 const FAILURE_APPLIED_MARKER = 'Applied before the failure:'
 
@@ -98,13 +112,42 @@ export function ApplyPatchRow(props: ApplyPatchRowProps): JSX.Element {
   const args = props.block.args
   // Re-scan at coarse text-length steps: the row re-renders as arguments stream,
   // but parsing a large patch on every chunk would be wasted work.
-  const lengthStep = args.stringLength('patch', { step: 1024 }) ?? 0
-  const preview = useMemo(
-    () => scanPatchPreview(args.text('patch') ?? '', { allowIncomplete: props.phase === 'preparing' }),
-    [props.phase, lengthStep],
+  // Re-scan at coarse steps: each scan walks the whole prefix, so a small step
+  // would make a large streaming patch quadratic. This only drives counts and
+  // operation discovery; line text is materialized on expand, not here.
+  const lengthStep = args.stringLength('patch', { step: 4096 }) ?? 0
+  const phase = props.phase
+  const result = phase === 'result' ? props.block : null
+
+  // A collapsed row only needs the operations and their totals: the count-only
+  // scan keeps them exact without materializing any line text.
+  const countPreview = useMemo(
+    () => scanPatchPreview(args.text('patch') ?? '', {
+      allowIncomplete: phase === 'preparing',
+      retainLines: false,
+    }),
+    [phase, lengthStep],
   )
-  const result = props.phase === 'result' ? props.block : null
-  const model = useMemo(() => buildModel(props.phase, result, preview, cwd, home), [props.phase, result, preview, cwd, home])
+  const countModel = useMemo(
+    () => buildModel(phase, result, countPreview, cwd, home),
+    [phase, result, countPreview, cwd, home],
+  )
+  const expandable = countModel.operations.length > 0 || countModel.errorText !== null
+  const open = expandable && disclosure.expanded
+
+  // Line text is retained only while the card is open: bounded while arguments
+  // still stream, complete once the call settles. Closing the card drops it.
+  const preview = useMemo(() => {
+    if (!open) return countPreview
+    return scanPatchPreview(args.text('patch') ?? '', {
+      allowIncomplete: phase === 'preparing',
+      lineLimit: phase === 'result' ? Number.POSITIVE_INFINITY : DEFAULT_PREVIEW_LINE_LIMIT,
+    })
+  }, [open, phase, lengthStep, countPreview])
+  const model = useMemo(
+    () => buildModel(phase, result, preview, cwd, home),
+    [phase, result, preview, cwd, home],
+  )
 
   const fileCount = model.operations.length
   const errorSummary = model.errorText === null ? null : firstLine(model.errorText)
@@ -117,9 +160,6 @@ export function ApplyPatchRow(props: ApplyPatchRowProps): JSX.Element {
     : fileCount === 0
       ? model.state === 'preparing' ? t('toolPreparing') : t('toolNoOperations')
       : ''
-  const expandable = fileCount > 0 || model.errorText !== null
-  const open = expandable && disclosure.expanded
-
   return (
     <div
       className="ap-tool"
@@ -196,6 +236,7 @@ function OperationRow({ view, t, openFile }: {
   readonly openFile: ApplyPatchRowProps['openFile']
 }): JSX.Element {
   const [diffOpen, setDiffOpen] = useState(false)
+  const [scrollTop, setScrollTop] = useState(0)
   const { operation } = view
   const lines = operationLines(operation)
   // Fold the MIDDLE around the changes, not the tail: each visible edge must
@@ -223,6 +264,18 @@ function OperationRow({ view, t, openFile }: {
       ? lines.slice(topStart, topEnd)
       : lines.slice(topStart, bottomEnd)
   const tailLines = showFold ? lines.slice(bottomStart, bottomEnd) : []
+  // Expanded long diffs are windowed: only the visible rows (plus overscan)
+  // become DOM, so a 100k-line patch costs the same node count as a short one.
+  const virtual = diffOpen && lines.length > DIFF_VIRTUAL_MIN
+  // One fixed canvas width for the whole diff: the horizontal scrollbar stays
+  // put while scrolling vertically, and each line's tint spans the full
+  // scrollable width instead of stopping at the viewport edge.
+  const canvasColumns = useMemo(
+    // Each line renders a two-character marker (`+ `, `- `, `  `) before its
+    // text, so the width budget includes it.
+    () => diffCanvasColumns(lines.map((line) => `  ${line.text}`)),
+    [lines],
+  )
   // Counts are exact even when the scanner itself capped the retained lines.
   const hiddenByLimit = operation.lineCount - lines.length
   return (
@@ -259,32 +312,49 @@ function OperationRow({ view, t, openFile }: {
       </div>
       {lines.length > 0 && (
         <div className="ap-tool-diff">
-          <div className="ap-tool-diff-body">
-            {headLines.map((line, index) => (
-              <div key={`head-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
-                {line.text}
-              </div>
-            ))}
-            {showFold && (
-              <button
-                type="button"
-                className="ap-tool-diff-fold"
-                onClick={() => setDiffOpen(true)}
-              >
-                {t('diffExpand', { count: hiddenMiddle })}
-              </button>
-            )}
-            {tailLines.map((line, index) => (
-              <div key={`tail-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
-                {line.text}
-              </div>
-            ))}
+          <div
+            className="ap-tool-diff-body"
+            onScroll={virtual ? (event) => setScrollTop(event.currentTarget.scrollTop) : undefined}
+          >
+            <div className="ap-tool-diff-canvas" style={{ width: `${canvasColumns}ch` }}>
+              {virtual ? (
+                <VirtualDiffLines lines={lines} scrollTop={scrollTop} />
+              ) : (
+                <>
+                  {headLines.map((line, index) => (
+                    <div key={`head-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
+                      {line.text}
+                    </div>
+                  ))}
+                  {showFold && (
+                    <button
+                      type="button"
+                      className="ap-tool-diff-fold"
+                      onClick={() => {
+                        setScrollTop(0)
+                        setDiffOpen(true)
+                      }}
+                    >
+                      {t('diffExpand', { count: hiddenMiddle })}
+                    </button>
+                  )}
+                  {tailLines.map((line, index) => (
+                    <div key={`tail-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
+                      {line.text}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
           </div>
           {foldable && diffOpen && (
             <button
               type="button"
               className="ap-tool-diff-collapse"
-              onClick={() => setDiffOpen(false)}
+              onClick={() => {
+                setScrollTop(0)
+                setDiffOpen(false)
+              }}
             >
               {t('diffCollapse')}
             </button>
@@ -295,6 +365,46 @@ function OperationRow({ view, t, openFile }: {
         <p className="ap-tool-more">{t('toolMoreLines', { count: hiddenByLimit })}</p>
       )}
     </li>
+  )
+}
+
+/**
+ * Windowed expanded diff: renders only the rows inside the scroll viewport
+ * (plus overscan), with spacers standing in for the rows above and below.
+ * @param props - the operation's lines and the body's current scroll offset.
+ * @returns the visible rows and the two spacer blocks.
+ */
+function VirtualDiffLines({ lines, scrollTop }: {
+  readonly lines: readonly PreviewLine[]
+  readonly scrollTop: number
+}): JSX.Element {
+  const { start, end } = diffWindow(lines.length, scrollTop, {
+    lineHeight: DIFF_LINE_HEIGHT,
+    viewport: DIFF_VIEWPORT_HEIGHT,
+    overscan: DIFF_OVERSCAN,
+  })
+  return (
+    <>
+      {start > 0 && (
+        <div
+          className="ap-tool-diff-spacer"
+          style={{ height: start * DIFF_LINE_HEIGHT }}
+          aria-hidden="true"
+        />
+      )}
+      {lines.slice(start, end).map((line, index) => (
+        <div key={start + index} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
+          {line.text}
+        </div>
+      ))}
+      {end < lines.length && (
+        <div
+          className="ap-tool-diff-spacer"
+          style={{ height: (lines.length - end) * DIFF_LINE_HEIGHT }}
+          aria-hidden="true"
+        />
+      )}
+    </>
   )
 }
 

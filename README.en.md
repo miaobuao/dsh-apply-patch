@@ -43,7 +43,10 @@ card's raw argument text:
   update / `D` delete / `M →` move); paths open from the row, and each
   operation carries its diff lines plus totals. A long diff folds its middle:
   each edge keeps three changed lines plus one context line outside them;
-  “Show N lines” reveals the rest and “Collapse” folds it back.
+  “Show N lines” reveals the **complete** diff (virtualized, so only visible
+  rows enter the DOM) and “Collapse” folds it back. A collapsed card runs a
+  count-only scan and keeps no line text; the 200-line preview budget applies
+  only while arguments stream and is lifted once the call settles.
 - While the `patch` argument streams, operations appear as soon as their hunk
   headers arrive; once settled, each operation is marked applied or not
   applied, and a failure shows the error text with “x/y applied”.

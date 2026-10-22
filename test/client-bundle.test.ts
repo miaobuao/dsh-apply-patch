@@ -612,6 +612,9 @@ describe('client bundle', () => {
       /\.ap-tool-op-head\s*\{[^}]*markdown-code-block/,
       'operation paths use the small diff-card type, not the chat body size',
     )
+    // One fixed-width canvas keeps the horizontal scrollbar steady and lets the
+    // added/removed tint span the whole scrollable line, not just the viewport.
+    assert.match(markup, /class="ap-tool-diff-canvas" style="width:\d+ch"/, 'the diff canvas has a fixed width')
   })
 
   itWhenBuilt('folds the middle of a long diff and expands it on click', () => {
@@ -657,6 +660,31 @@ describe('client bundle', () => {
     )
     assert.match(markup, /class="ap-tool-diff-fold"/, 'the expand control is a button')
     assert.match(markup, /data-state="applied"/, 'the operation keeps its applied verdict')
+  })
+
+  itWhenBuilt('retains the full diff once settled, without the streaming preview cap', () => {
+    const bundle = loadBundle()
+    const harness = createClientHarness(READY)
+    bundle.register(harness.ctx)
+    // 250 diff lines: more than the 200-line streaming preview budget.
+    const body = Array.from({ length: 125 }, (_, index) => `-old-${index}\n+new-${index}`).join('\n')
+    const markup = renderTool(registeredToolview(harness), toolProps(harness, {
+      phase: 'result',
+      expanded: true,
+      patch: ['*** Begin Patch', '*** Update File: src/a.ts', '@@', body, '*** End Patch'].join('\n'),
+      content: [{ type: 'text', text: 'Success. Updated the following files:\nM src/a.ts' }],
+    }))
+
+    // The fold count is derived from all 250 retained lines: 250 - 3 - 4 = 243
+    // hidden between the two change edges. A capped preview would report 196.
+    assertShows(
+      markup,
+      harness.translateNs('applyPatch.tool', 'en', 'diffExpand', { count: 243 }),
+      'the fold is computed over the complete diff',
+    )
+    assertShows(markup, 'old-0', 'a changed line at the top edge')
+    assertShows(markup, 'new-124', 'a changed line at the bottom edge')
+    assertHides(markup, ' more lines', 'the streaming preview-cap notice')
   })
 
   itWhenBuilt('derives a single-file title from its action and path', () => {

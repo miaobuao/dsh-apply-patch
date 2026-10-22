@@ -290,11 +290,26 @@
   overflow-y: auto;
 }
 
+.ap-tool-diff-canvas {
+  /* The row's inline width keeps the horizontal scroll range fixed; the floor
+     lets short diffs still paint their tint across the whole viewport. */
+  min-width: 100%;
+}
+
 .ap-tool-diff-line {
-  min-height: 1lh;
+  /* Fixed height: the expanded list is windowed with 18px rows. */
+  height: 18px;
+  line-height: 18px;
+  /* Full canvas width: the tint follows the text when scrolled sideways. */
+  width: 100%;
+  box-sizing: border-box;
   padding: 0 12px;
   white-space: pre;
   color: var(--dsw-alias-label-secondary, inherit);
+}
+
+.ap-tool-diff-spacer {
+  width: 100%;
 }
 
 .ap-tool-diff-add::before {
