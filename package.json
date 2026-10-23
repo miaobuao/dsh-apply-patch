@@ -1,6 +1,6 @@
 {
   "name": "dsh-apply-patch",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.1",
   "description": "DSH plugin: a codex-style apply_patch tool (*** Begin Patch / *** Update File / *** Add File / *** Delete File) injected into the model toolset through DSH's built-in sandbox, enabled on install, with switches in the Plugins center to hide the built-in edit and write tools.",
   "icon": "./icon.svg",
   "license": "GPL-3.0-or-later",
@@ -127,6 +127,7 @@
     "@deepseek-ai/dsh-typert-registry": "0.2.1-alpha.1",
     "@deepseek-ai/dsh-user-approval": "0.2.1-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
@@ -136,5 +137,8 @@
     "tsx": "^4.23.12",
     "typescript": "^5.9.0"
   },
-  "packageManager": "pnpm@11.21.0"
+  "packageManager": "pnpm@11.21.0",
+  "dependencies": {
+    "diff-match-patch": "^1.0.5"
+  }
 }

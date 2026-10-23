@@ -50,6 +50,22 @@ card's raw argument text:
 - While the `patch` argument streams, operations appear as soon as their hunk
   headers arrive; once settled, each operation is marked applied or not
   applied, and a failure shows the error text with “x/y applied”.
+- Replacement lines show a stronger change tint inside the red/green row
+  backgrounds. For each `@@` block, context + removed lines rebuild the old text
+  and context + added lines rebuild the new text; diff-match-patch runs one
+  character-level diff with `diff_cleanupSemantic` over that whole block, and the
+  edit script is projected back onto lines. Line splits, merges, leading
+  insertions and middle insertions therefore align by content: an extra line is a
+  whole-line addition or deletion instead of being forced onto an old line. Line
+  numbers come from a numbered `@@ -a,b +c,d @@`; a labeled block shows its
+  header, while a bare `@@` shows no header or line numbers because the patch
+  carries no absolute positions. Changed runs use a
+  stronger theme tint and fill the row height; long lines wrap. Diffs above 800
+  rows keep the fixed-height virtualized/horizontal-scroll view so expanding a
+  huge patch does not materialize every row. Source text and whitespace are
+  preserved exactly, and highlight boundaries do not split emoji or combining
+  sequences. Oversized blocks, or a browser without a grapheme segmenter, keep
+  the plain row tint.
 
 The card derives everything from the logged call arguments and result, so
 replaying an older session renders the same way. The Client half imports no

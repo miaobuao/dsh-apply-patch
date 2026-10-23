@@ -299,6 +299,7 @@ function inlinedCss(markup: string): string {
 function visibleText(markup: string): string {
   return markup
     .replace(/<style>[\s\S]*?<\/style>/g, '')
+    .replace(/<[^>]*>/g, '')
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
@@ -565,6 +566,8 @@ describe('client bundle', () => {
     )
     assertShows(markup, '+3', 'the added total')
     assertShows(markup, '-1', 'the removed total')
+    assert.match(inlinedCss(markup), /\.ap-tool-added\s*\{[^}]*state-success-primary/)
+    assert.match(inlinedCss(markup), /\.ap-tool-removed\s*\{[^}]*state-error-primary/)
     assertHides(markup, '*** Begin Patch', 'the raw patch')
     assertHides(markup, '*** Add File', 'a raw hunk header')
     // The shell's disclosure rows swap the leading icon for a hover chevron;
@@ -612,9 +615,47 @@ describe('client bundle', () => {
       /\.ap-tool-op-head\s*\{[^}]*markdown-code-block/,
       'operation paths use the small diff-card type, not the chat body size',
     )
-    // One fixed-width canvas keeps the horizontal scrollbar steady and lets the
-    // added/removed tint span the whole scrollable line, not just the viewport.
-    assert.match(markup, /class="ap-tool-diff-canvas" style="width:\d+ch"/, 'the diff canvas has a fixed width')
+    // Normal diffs wrap; only the large-diff windowed fallback uses a fixed canvas.
+    assert.match(markup, /class="ap-tool-diff-canvas"/, 'the diff canvas is present')
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-text\s*\{[^}]*white-space:\s*pre-wrap/)
+  })
+
+  itWhenBuilt('highlights changed runs inside the existing line tints', () => {
+    const bundle = loadBundle()
+    const harness = createClientHarness(READY)
+    bundle.register(harness.ctx)
+    const markup = renderTool(registeredToolview(harness), toolProps(harness, {
+      phase: 'result',
+      expanded: true,
+      patch: ['*** Begin Patch', '*** Update File: a.ts', '@@',
+        '-const timeout = 30', '+const timeout = 60', '*** End Patch'].join('\n'),
+      content: [{ type: 'text', text: 'Success. Updated the following files:\nM a.ts' }],
+    }))
+    assert.match(markup, /ap-tool-diff-remove[^"]*"[\s\S]*?const timeout = <span class="ap-tool-diff-char">3<\/span>0/)
+    assert.match(markup, /ap-tool-diff-add[^"]*"[\s\S]*?const timeout = <span class="ap-tool-diff-char">6<\/span>0/)
+    assertShows(markup, 'const timeout = 30', 'the original text survives nested spans')
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-add \.ap-tool-diff-char\s*\{[^}]*color-mix\([^}]*state-success-primary[^}]*45%/)
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-remove \.ap-tool-diff-char\s*\{[^}]*color-mix\([^}]*state-error-primary[^}]*45%/)
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-char\s*\{[^}]*padding:\s*2px 0/)
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-text\s*\{[^}]*white-space:\s*pre-wrap/)
+    assert.match(inlinedCss(markup), /\.ap-tool-diff-line\s*\{[^}]*overflow-wrap:\s*anywhere/)
+  })
+
+  itWhenBuilt('marks a leading inserted row as a whole addition without shifting later highlights', () => {
+    const bundle = loadBundle()
+    const harness = createClientHarness(READY)
+    bundle.register(harness.ctx)
+    const markup = renderTool(registeredToolview(harness), toolProps(harness, {
+      phase: 'result',
+      expanded: true,
+      patch: ['*** Begin Patch', '*** Update File: a.ts', '@@',
+        '-value = 1', '-name = old', '+logChange()', '+value = 2', '+name = new',
+        '*** End Patch'].join('\n'),
+      content: [{ type: 'text', text: 'Success. Updated the following files:\nM a.ts' }],
+    }))
+    assert.match(markup, /ap-tool-diff-add[^"]*"[\s\S]*?<span class="ap-tool-diff-char">logChange\(\)<\/span>/)
+    assert.match(markup, /ap-tool-diff-add[^"]*"[\s\S]*?value = <span class="ap-tool-diff-char">2<\/span>/)
+    assert.match(markup, /ap-tool-diff-add[^"]*"[\s\S]*?name = <span class="ap-tool-diff-char">new<\/span>/)
   })
 
   itWhenBuilt('folds the middle of a long diff and expands it on click', () => {
@@ -645,7 +686,6 @@ describe('client bundle', () => {
       ].join('\n'),
       content: [{ type: 'text', text: 'Success. Updated the following files:\nM src/a.ts' }],
     }))
-
     // Each edge keeps changed lines (the point of the preview); only the
     // context between the two change clusters is folded.
     assertShows(markup, 'removed-a', 'the first changed line at the top edge')

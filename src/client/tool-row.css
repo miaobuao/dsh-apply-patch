@@ -152,16 +152,11 @@
   color: inherit;
 }
 
-.ap-tool-added,
-.ap-tool-removed {
-  color: inherit;
-}
-
-.ap-tool-row:is(:hover, [aria-expanded='true']) .ap-tool-added {
+.ap-tool-added {
   color: var(--dsw-alias-state-success-primary, #2f9e44);
 }
 
-.ap-tool-row:is(:hover, [aria-expanded='true']) .ap-tool-removed {
+.ap-tool-removed {
   color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 
@@ -252,14 +247,6 @@
   font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
-.ap-tool-op .ap-tool-added {
-  color: var(--dsw-alias-state-success-primary, #2f9e44);
-}
-
-.ap-tool-op .ap-tool-removed {
-  color: var(--dsw-alias-state-error-primary, #e5484d);
-}
-
 .ap-tool-op-state {
   flex: none;
   margin-left: 8px;
@@ -286,42 +273,78 @@
 .ap-tool-diff-body {
   padding: 4px 0;
   max-height: 240px;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
+.ap-tool-diff-body-windowed {
+  overflow-x: auto;
+}
+
 .ap-tool-diff-canvas {
-  /* The row's inline width keeps the horizontal scroll range fixed; the floor
-     lets short diffs still paint their tint across the whole viewport. */
   min-width: 100%;
 }
 
 .ap-tool-diff-line {
-  /* Fixed height: the expanded list is windowed with 18px rows. */
-  height: 18px;
+  /* Wrapped rows grow with their text; the windowed fallback below pins them
+     back to 18px so the virtualizer keeps its fixed-height geometry. */
+  min-height: 18px;
   line-height: 18px;
-  /* Full canvas width: the tint follows the text when scrolled sideways. */
   width: 100%;
   box-sizing: border-box;
   padding: 0 12px;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--dsw-alias-label-secondary, inherit);
+  display: grid;
+  grid-template-columns: 4ch 2ch minmax(0, 1fr);
+  align-items: start;
+}
+
+.ap-tool-diff-line-flush {
+  grid-template-columns: 2ch minmax(0, 1fr);
+}
+
+.ap-tool-diff-line-divider {
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.25));
 }
 
 .ap-tool-diff-spacer {
   width: 100%;
 }
 
-.ap-tool-diff-add::before {
-  content: '+ ';
+.ap-tool-diff-hunk {
+  min-height: 18px;
+  line-height: 18px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 12px;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+  background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 128, 0.1));
+  font-weight: 500;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.ap-tool-diff-remove::before {
-  content: '- ';
+.ap-tool-diff-gutter {
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.7));
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  padding-right: 4px;
+  line-height: 18px;
 }
 
-.ap-tool-diff-context::before {
-  content: '  ';
+.ap-tool-diff-marker {
+  user-select: none;
+  line-height: 18px;
+}
+
+.ap-tool-diff-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 18px;
 }
 
 .ap-tool-diff-add {
@@ -338,6 +361,47 @@
 
 .ap-tool-diff-context {
   color: var(--dsw-alias-label-secondary, inherit);
+}
+
+/* Changed runs sit on a stronger tint than their line. Inline vertical padding
+   fills the 18px row (and joins adjacent wrapped fragments) without changing
+   text advance, tabs, selection or row geometry. */
+.ap-tool-diff-char {
+  padding: 2px 0;
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Large diffs keep the fixed-height/horizontal-scroll windowed renderer. */
+.ap-tool-diff-canvas-windowed .ap-tool-diff-line {
+  height: 18px;
+  min-height: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+  align-items: center;
+}
+
+.ap-tool-diff-canvas-windowed .ap-tool-diff-text {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.ap-tool-diff-canvas-windowed .ap-tool-diff-hunk {
+  height: 18px;
+  min-height: 0;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.ap-tool-diff-add .ap-tool-diff-char {
+  background: var(--dsw-alias-code-diff-added, rgba(47, 158, 68, 0.12));
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e44) 45%, transparent);
+}
+
+.ap-tool-diff-remove .ap-tool-diff-char {
+  background: var(--dsw-alias-code-diff-deleted, rgba(229, 72, 77, 0.12));
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 45%, transparent);
 }
 
 /* The middle of a long diff folds behind these two controls. */

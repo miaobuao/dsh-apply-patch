@@ -17,5 +17,10 @@ Copyright 2025 OpenAI
 License: Apache-2.0; see LICENSES/Apache-2.0.txt.
 The upstream fixtures are unmodified except for their README attribution.
 
+The browser client bundles diff-match-patch:
+https://github.com/google/diff-match-patch
+Copyright 2018 The diff-match-patch Authors.
+License: Apache-2.0; see LICENSES/Apache-2.0.txt.
+
 This fork as a whole is distributed under GPL-3.0-or-later (see LICENSE).
 Third-party components retain their original notices and license grants.

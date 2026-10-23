@@ -16,11 +16,11 @@ import { useMemo, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { APPLY_PATCH_TOOL_NAME } from '../shared/constants'
 import { diffCanvasColumns, diffWindow } from '../shared/diff-window'
+import { createDiffView, type DiffRow } from '../shared/file-diff'
 import {
   DEFAULT_PREVIEW_LINE_LIMIT,
   scanPatchPreview,
   type PatchPreview,
-  type PreviewLine,
   type PreviewOperation,
 } from '../shared/patch-preview'
 import { TOOL_LOCALE_NS } from './locales'
@@ -88,8 +88,11 @@ const DIFF_VIEWPORT_HEIGHT = 240
 /** Rows rendered beyond the visible window on each side. */
 const DIFF_OVERSCAN = 6
 
-/** Line count below which the expanded diff renders without windowing. */
-const DIFF_VIRTUAL_MIN = 80
+/**
+ * Line count below which the expanded diff renders every wrapped row. Larger
+ * diffs fall back to fixed-height windowing so a 100k-line patch stays cheap.
+ */
+const DIFF_VIRTUAL_MIN = 800
 
 /** Marker the Host writes before the applied-when-failed list. */
 const FAILURE_APPLIED_MARKER = 'Applied before the failure:'
@@ -238,13 +241,14 @@ function OperationRow({ view, t, openFile }: {
   const [diffOpen, setDiffOpen] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const { operation } = view
-  const lines = operationLines(operation)
+  const lines = useMemo(() => createDiffView(operation), [operation])
+  const dataLineCount = useMemo(() => lines.filter((line) => line.kind !== 'hunk').length, [lines])
   // Fold the MIDDLE around the changes, not the tail: each visible edge must
   // contain changed lines, otherwise the collapsed card would hide the very
   // thing the patch did (a hunk's leading context lines are not interesting).
   const changeIndices: number[] = []
   lines.forEach((line, index) => {
-    if (line.kind !== 'context') changeIndices.push(index)
+    if (line.kind === 'add' || line.kind === 'remove') changeIndices.push(index)
   })
   const foldable = lines.length > DIFF_FOLD_THRESHOLD && changeIndices.length > 0
   const folded = foldable && !diffOpen
@@ -272,12 +276,14 @@ function OperationRow({ view, t, openFile }: {
   // scrollable width instead of stopping at the viewport edge.
   const canvasColumns = useMemo(
     // Each line renders a two-character marker (`+ `, `- `, `  `) before its
-    // text, so the width budget includes it.
-    () => diffCanvasColumns(lines.map((line) => `  ${line.text}`)),
+    // text and a line-number gutter, so the width budget includes both.
+    () => diffCanvasColumns(lines.map((line) => line.kind === 'hunk'
+      ? line.text
+      : `    ${line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}${line.text}`)),
     [lines],
   )
   // Counts are exact even when the scanner itself capped the retained lines.
-  const hiddenByLimit = operation.lineCount - lines.length
+  const hiddenByLimit = operation.lineCount - dataLineCount
   return (
     <li className="ap-tool-op" data-kind={operation.kind} data-state={view.state}>
       <div className="ap-tool-op-head">
@@ -313,18 +319,19 @@ function OperationRow({ view, t, openFile }: {
       {lines.length > 0 && (
         <div className="ap-tool-diff">
           <div
-            className="ap-tool-diff-body"
+            className={virtual ? 'ap-tool-diff-body ap-tool-diff-body-windowed' : 'ap-tool-diff-body'}
             onScroll={virtual ? (event) => setScrollTop(event.currentTarget.scrollTop) : undefined}
           >
-            <div className="ap-tool-diff-canvas" style={{ width: `${canvasColumns}ch` }}>
+            <div
+              className={virtual ? 'ap-tool-diff-canvas ap-tool-diff-canvas-windowed' : 'ap-tool-diff-canvas'}
+              style={virtual ? { width: `${canvasColumns}ch` } : undefined}
+            >
               {virtual ? (
-                <VirtualDiffLines lines={lines} scrollTop={scrollTop} />
+                <VirtualDiffLines rows={lines} scrollTop={scrollTop} />
               ) : (
                 <>
                   {headLines.map((line, index) => (
-                    <div key={`head-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
-                      {line.text}
-                    </div>
+                    <DiffLine key={`head-${index}`} line={line} />
                   ))}
                   {showFold && (
                     <button
@@ -339,9 +346,7 @@ function OperationRow({ view, t, openFile }: {
                     </button>
                   )}
                   {tailLines.map((line, index) => (
-                    <div key={`tail-${index}`} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
-                      {line.text}
-                    </div>
+                    <DiffLine key={`tail-${index}`} line={line} />
                   ))}
                 </>
               )}
@@ -374,11 +379,11 @@ function OperationRow({ view, t, openFile }: {
  * @param props - the operation's lines and the body's current scroll offset.
  * @returns the visible rows and the two spacer blocks.
  */
-function VirtualDiffLines({ lines, scrollTop }: {
-  readonly lines: readonly PreviewLine[]
+function VirtualDiffLines({ rows, scrollTop }: {
+  readonly rows: readonly DiffRow[]
   readonly scrollTop: number
 }): JSX.Element {
-  const { start, end } = diffWindow(lines.length, scrollTop, {
+  const { start, end } = diffWindow(rows.length, scrollTop, {
     lineHeight: DIFF_LINE_HEIGHT,
     viewport: DIFF_VIEWPORT_HEIGHT,
     overscan: DIFF_OVERSCAN,
@@ -392,19 +397,41 @@ function VirtualDiffLines({ lines, scrollTop }: {
           aria-hidden="true"
         />
       )}
-      {lines.slice(start, end).map((line, index) => (
-        <div key={start + index} className={`ap-tool-diff-line ap-tool-diff-${line.kind}`}>
-          {line.text}
-        </div>
+      {rows.slice(start, end).map((line, index) => (
+        <DiffLine key={start + index} line={line} />
       ))}
-      {end < lines.length && (
+      {end < rows.length && (
         <div
           className="ap-tool-diff-spacer"
-          style={{ height: (lines.length - end) * DIFF_LINE_HEIGHT }}
+          style={{ height: (rows.length - end) * DIFF_LINE_HEIGHT }}
           aria-hidden="true"
         />
       )}
     </>
+  )
+}
+
+/** One hunk header or one numbered diff line. */
+function DiffLine({ line }: {
+  readonly line: DiffRow
+}): JSX.Element {
+  if (line.kind === 'hunk') {
+    return <div className="ap-tool-diff-hunk">{line.text}</div>
+  }
+  const number = line.kind === 'remove' ? line.oldLine : line.newLine
+  const marker = line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '
+  const hasGutter = number !== null
+  const divider = line.hunkStart === true ? ' ap-tool-diff-line-divider' : ''
+  return (
+    <div className={`ap-tool-diff-line ap-tool-diff-${line.kind}${hasGutter ? '' : ' ap-tool-diff-line-flush'}${divider}`}>
+      {hasGutter && <span className="ap-tool-diff-gutter">{number}</span>}
+      <span className="ap-tool-diff-marker" aria-hidden="true">{marker}</span>
+      <span className="ap-tool-diff-text">
+        {line.segments === null ? line.text : line.segments.map((segment, index) => segment.changed
+          ? <span key={index} className="ap-tool-diff-char">{segment.text}</span>
+          : segment.text)}
+      </span>
+    </div>
   )
 }
 
@@ -621,17 +648,6 @@ function operationBadge(operation: PreviewOperation): string {
     case 'delete': return 'D'
     case 'update': return 'M'
   }
-}
-
-/**
- * Flatten the preview lines one operation carries.
- * @param operation - previewed operation.
- * @returns its lines in display order.
- */
-function operationLines(operation: PreviewOperation): readonly PreviewLine[] {
-  if (operation.kind === 'add') return operation.lines
-  if (operation.kind === 'update') return operation.chunks.flatMap((chunk) => chunk.lines)
-  return []
 }
 
 /**
