@@ -396,12 +396,12 @@
 
 .ap-tool-diff-add .ap-tool-diff-char {
   background: var(--dsw-alias-code-diff-added, rgba(47, 158, 68, 0.12));
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e44) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2f9e44) 18%, transparent);
 }
 
 .ap-tool-diff-remove .ap-tool-diff-char {
   background: var(--dsw-alias-code-diff-deleted, rgba(229, 72, 77, 0.12));
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 18%, transparent);
 }
 
 /* The middle of a long diff folds behind these two controls. */
