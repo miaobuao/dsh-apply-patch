@@ -34,7 +34,7 @@ import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { apply as applyPlugin, inject as pluginInject } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
-import { APPLY_PATCH_TOOL_NAME } from '../src/host/injector.js'
+import { APPLY_PATCH_TOOL_NAME } from '../src/shared/constants.js'
 
 /** Boot a composed context and apply the plugin with the given entry config. */
 async function boot(workspace: string, mode: string, entryConfig: Record<string, unknown>): Promise<Context> {

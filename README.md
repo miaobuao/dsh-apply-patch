@@ -54,27 +54,19 @@ token，随宿主明暗主题切换。
 
 ### 隐藏内置工具
 
-隐藏由两个彼此独立的机制组成，都按工具名工作，因此不关心工具注册在哪一层：
+隐藏通过 `ctx.tools.restrict({ deny })` 完成，限制挂在**每个 agent 自己的 context** 上：
 
-**装配过滤（`system-prompt/assemble`）** 负责“看不见”：
-
-- 每个步骤组装出的工具清单里去掉被隐藏的工具；紧接着的步骤生效，不需要重启。
-- 同时去掉同名的引导段落（`tool:edit` / `tool:write`）。这些段落的文本由
-  `@deepseek-ai/dsh-tool-fs` 依据工具注册表生成，注册表里仍留着定义，所以只过滤工具
-  清单会让提示继续描述一个模型已经不能调用的工具。
-
-**执行守卫（`ctx.tools.guard`）** 负责堵住剩余入口：
-
-- 按名拒绝任何调用，无论它是否带 agent 作用域。
-
-之所以不采用 `ctx.tools.restrict`：它只能遮住 agent 继承的**全局**工具，而实际部署里
-`@deepseek-ai/dsh-tool-fs` 由 agent preset 挂载（`dsh-web-app/presets/*.patch.yml` 中的
-`tool-fs` 行），工具注册在 **agent 作用域**，作用域本地的名字根本不可限制，只做限制会
-一个工具都遮不住。若要让工具真正从注册表消失，应在组合层关闭它们：给
-`@deepseek-ai/dsh-tool-fs` 行加 `config: { edit: false, write: false }`。
-
-开关值在每次使用时从 volatile 配置读取（`config.<field>.get()`），改开关不会重新加载
-插件。
+- `agent/created` 时按当前开关建立限制；开关翻转由 `settings/document-updated` 触发重新
+  求值，下一步生效，不需要重启插件或重建 agent。
+- 这是官方对「让某个 agent 看不到工具」的规定机制：schema 展示、名字查询与执行三者
+  保持一致，不会出现「工具还列着、调用却被拒」的中间态。
+- 限制是 `agent.ctx` 的 effect：卸载插件或销毁 agent 时自动解除，`edit` / `write`
+  自己回来。**不会留下任何持久改动**，不需要用户手动恢复。
+- 预设挂载的工具同样覆盖得到：preset registry 为每个 revision 生成一个 generation
+  scope，并把 agent 的 scope key 绑成它的**子作用域**，因此 `tools.view(agent)` 把预设
+  注册读成继承工具，正是 `restrict` 过滤的对象。
+- 若组合里根本没有挂载某个工具，点名它会抛错，所以安装处会捕获并只记录警告，绝不
+  因此中断 agent 创建。
 
 ### 覆盖未读取的文件
 
@@ -114,13 +106,14 @@ token，随宿主明暗主题切换。
 
 ## 兼容性
 
-- `peerDependencies` 声明：`@deepseek-ai/dsh-*` 为 `^0.2.1-alpha.1`，
-  `@deepseek-ai/cordis` 为 `~4.0.5-alpha.1`。
-- 支持 `0.2.1-alpha.1` 起的宿主。`0.1.x` 不受支持：客户端设置页依赖 `configForms`
-  （旧 `settingsScope` 时代已不兼容），宿主侧依赖作用域 `tools.restrict` 与 `agents`
-  服务。
-- 本仓库的开发与验证基线：`@deepseek-ai/*` `0.2.1-alpha.1`（`devDependencies` 固定），
-  `typecheck` 与 `test` 在该基线上通过。
+- `peerDependencies` 声明：`@deepseek-ai/dsh-*` 为 `^0.2.2-alpha.2`，
+  `@deepseek-ai/cordis` 为 `~4.0.6-alpha.1`。
+- 支持 `0.2.2-alpha.2` 起的宿主。`0.2.1` 及更早不受支持：0.2.2 才把工具声明从
+  `system-prompt/assemble` 载荷中移出（旧版本启用本插件会导致每轮装配抛错），
+  `settings/document-updated` 与当前 `tools.restrict` 语义也以该版本为准。
+- 本仓库的开发与验证基线：`@deepseek-ai/*` `0.2.2-alpha.2`（`devDependencies` 固定），
+  `typecheck`、`build` 与 `test` 在该基线上通过。基线必须跟着宿主升级，否则宿主的
+  契约变化不会被 `tsc` 发现。
 
 ## 许可与来源
 

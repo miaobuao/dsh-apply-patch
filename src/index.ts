@@ -4,7 +4,8 @@
  * Always registers the codex-style `apply_patch` tool over DSH's built-in
  * sandbox (ctx.fs for Add/Update/Move writes, ctx.shell for Delete), and hides
  * the built-in file-editing tools the `dsh-apply-patch` settings namespace asks
- * to disable (`edit` / `write`, both from `@deepseek-ai/dsh-tool-fs`).
+ * to disable (`edit` / `write`, both from `@deepseek-ai/dsh-tool-fs`) through
+ * `ctx.tools.restrict()` on each agent's own context.
  *
  * Installing the plugin is enough to enable `apply_patch`; the settings are the
  * two suppression switches plus the overwrite policy switch. The Web UI exposes
@@ -22,7 +23,7 @@ import {
   type ResolvedApplyPatchSettings,
 } from './host/settings-schema.js'
 import { registerApplyPatchTool, type ToolFaces } from './host/tool.js'
-import { installToolGuard, installToolSuppressor } from './host/injector.js'
+import { installToolSuppressor } from './host/injector.js'
 
 export const name = 'dsh-apply-patch'
 
@@ -64,11 +65,10 @@ export function apply(ctx: Context, config: ResolvedApplyPatchSettings): void {
   }
   registerApplyPatchTool(ctx, faces)
 
-  // Hide the built-in file-editing tools the settings ask to replace: drop them
-  // and their guidance sections from every assembly AND deny calls that name
-  // them. Both installs are fiber effects, so teardown is the entry's job.
+  // Hide the built-in file-editing tools the settings ask to replace, through
+  // the official per-agent restriction: schema presentation, lookup, and
+  // dispatch stay aligned, and unloading this plugin lifts it again.
   installToolSuppressor(ctx, config)
-  installToolGuard(ctx, config)
 }
 
 export { ApplyPatchSettingsSchema, APPLY_PATCH_SETTINGS_NS }

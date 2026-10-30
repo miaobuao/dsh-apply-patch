@@ -21,7 +21,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
-const REQUIRED_DSH_PEER_FLOOR = '0.2.1-alpha.1'
+const REQUIRED_DSH_PEER_FLOOR = '0.2.2-alpha.2'
 const CLIENT_TYPE_ENTRY = 'lib/types/client/index.d.ts'
 
 const failures = []

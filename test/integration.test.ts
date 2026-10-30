@@ -20,6 +20,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
@@ -32,7 +33,8 @@ import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { apply as applyPlugin, inject as pluginInject } from '../src/index.js'
 import { ApplyPatchSettingsSchema } from '../src/host/settings-schema.js'
-import { APPLY_PATCH_TOOL_NAME, SUPPRESSIBLE_TOOLS, suppressedTools } from '../src/host/injector.js'
+import { APPLY_PATCH_TOOL_NAME } from '../src/shared/constants.js'
+import { SUPPRESSIBLE_TOOLS, suppressedTools } from '../src/host/injector.js'
 
 /** Boot a composed context with the given sandbox mode + entry config. */
 async function boot(workspace: string, mode: string, entryConfig: Record<string, unknown>) {
@@ -135,56 +137,9 @@ describe('plugin apply', () => {
 })
 
 describe('built-in tool suppression', () => {
-  /**
-   * Drive the REAL system-prompt/assemble waterfall with a synthetic assembly.
-   *
-   * The composed test context mounts no prompt tool list (that wiring lives in
-   * plugins this scaffold does not boot), so `systemPrompt.assemble()` returns
-   * an empty tool list. Emitting the waterfall with the built-in editing tools
-   * plus apply_patch in the assembly exercises the plugin's own hook — which is
-   * what decides which tools the model ends up seeing.
-   */
   const BUILTIN = ['edit', 'write'] as const
 
-  /**
-   * Drive the REAL waterfall with an assembly holding the built-ins, and return
-   * the names the model would be offered. Hiding happens in the assembly, so the
-   * registry view is deliberately not the measured surface.
-   */
-  async function assembleTools(ctx: Context): Promise<string[]> {
-    for (const name of ['read', ...BUILTIN]) registerStubTool(ctx, name)
-    const assembly = {
-      tools: [APPLY_PATCH_TOOL_NAME, 'read', ...BUILTIN].map(name => ({ name })),
-      sections: [],
-      contexts: [],
-      variables: {},
-    }
-    const out = await ctx.waterfall(
-      'system-prompt/assemble',
-      assembly as never,
-      { agent: undefined } as never,
-      () => Promise.resolve(assembly as never),
-    )
-    return (out as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
-  }
-
-  it('hides both built-in editing tools by default', async () => {
-    const ctx = await boot(workspace, 'workspace-write', {})
-    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read'])
-  })
-
-  it('keeps the built-in tools when both switches are off', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { disableEdit: false, disableWrite: false })
-    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read', 'edit', 'write'])
-  })
-
-  it('suppresses each built-in tool independently', async () => {
-    const ctx = await boot(workspace, 'workspace-write', { disableEdit: true, disableWrite: false })
-    assert.deepEqual(await assembleTools(ctx), [APPLY_PATCH_TOOL_NAME, 'read', 'write'])
-    assert.deepEqual([...SUPPRESSIBLE_TOOLS], ['edit', 'write'])
-  })
-
-  /** Register a stub built-in editing tool so a call has a body to deny or run. */
+  /** Register a stub built-in editing tool so a call has a body to run. */
   function registerStubTool(ctx: Context, name: string): void {
     ctx.tools.register(defineTool({
       name,
@@ -200,37 +155,57 @@ describe('built-in tool suppression', () => {
     }))
   }
 
-  /** Call a tool through the registry's public execution path (guards included). */
-  async function callTool(ctx: Context, name: string): Promise<{ text: string; isError: boolean }> {
-    const result = await ctx.tools.execute({
-      callId: `${name}-call`,
-      name,
-      arguments: {},
-      signal: new AbortController().signal,
-    } as never)
-    return {
-      text: result.content.map((block) => block.type === 'text' ? block.text : '').join(''),
-      isError: result.isError,
-    }
+  /** Mount the built-ins and mint an agent scope over them. */
+  function mintAgent(ctx: Context) {
+    for (const name of ['read', ...BUILTIN]) registerStubTool(ctx, name)
+    const key = {}
+    const scope = createScope(ctx, key)
+    return { key, agent: { ctx: scope.ctx } as never }
   }
 
-  it('denies execution when the model names a hidden tool directly', async () => {
-    // The assembly filter hides `edit` from the model's tool list, but the
-    // registry still holds the definition: the host resolves a call by name, so
-    // without the execution guard a model that emits `edit` anyway would run it.
+  /** The names an agent scope resolves, which is what the model is offered. */
+  function visibleTools(ctx: Context, key: object): string[] {
+    return [APPLY_PATCH_TOOL_NAME, 'read', ...BUILTIN].filter(
+      name => ctx.tools.get(name, key) !== undefined,
+    )
+  }
+
+  it('hides both built-in editing tools by default', async () => {
     const ctx = await boot(workspace, 'workspace-write', {})
-    registerStubTool(ctx, 'edit')
-    const denied = await callTool(ctx, 'edit')
-    assert.equal(denied.isError, true)
-    assert.match(denied.text, /hidden by dsh-apply-patch/)
+    const { key, agent } = mintAgent(ctx)
+    ctx.emit('agent/created', { agent } as never)
+    assert.deepEqual(visibleTools(ctx, key), [APPLY_PATCH_TOOL_NAME, 'read'])
   })
 
-  it('runs the built-in tool again when its switch is off', async () => {
+  it('keeps the built-in tools when both switches are off', async () => {
     const ctx = await boot(workspace, 'workspace-write', { disableEdit: false, disableWrite: false })
-    registerStubTool(ctx, 'edit')
-    const allowed = await callTool(ctx, 'edit')
-    assert.equal(allowed.isError, false)
-    assert.match(allowed.text, /edit executed/)
+    const { key, agent } = mintAgent(ctx)
+    ctx.emit('agent/created', { agent } as never)
+    assert.deepEqual(visibleTools(ctx, key), [APPLY_PATCH_TOOL_NAME, 'read', 'edit', 'write'])
+  })
+
+  it('suppresses each built-in tool independently', async () => {
+    const ctx = await boot(workspace, 'workspace-write', { disableEdit: true, disableWrite: false })
+    const { key, agent } = mintAgent(ctx)
+    ctx.emit('agent/created', { agent } as never)
+    assert.deepEqual(visibleTools(ctx, key), [APPLY_PATCH_TOOL_NAME, 'read', 'write'])
+    assert.deepEqual([...SUPPRESSIBLE_TOOLS], ['edit', 'write'])
+  })
+
+  it('keeps the restriction scoped to the agent that received it', async () => {
+    const ctx = await boot(workspace, 'workspace-write', {})
+    for (const name of ['read', ...BUILTIN]) registerStubTool(ctx, name)
+    const first = {}
+    const second = {}
+    const firstAgent = { ctx: createScope(ctx, first).ctx } as never
+    const secondAgent = { ctx: createScope(ctx, second).ctx } as never
+    ctx.emit('agent/created', { agent: firstAgent } as never)
+    assert.deepEqual(visibleTools(ctx, first), [APPLY_PATCH_TOOL_NAME, 'read'])
+    assert.deepEqual(
+      visibleTools(ctx, second),
+      [APPLY_PATCH_TOOL_NAME, 'read', 'edit', 'write'],
+      'an agent that never received the restriction keeps every tool',
+    )
   })
 })
 

@@ -1,5 +1,46 @@
 # 变更记录
 
+## 0.2.0 - 2026-10-30
+
+本次更新修复了在 DSH `0.2.2-alpha.2` 上启用插件后**完全无法对话**的问题，并把
+「隐藏内置工具」改为官方推荐的按 agent 限制机制。
+
+### 修复
+
+- 启用插件后每一轮对话都会失败：`system-prompt/assemble` 的载荷自 0.2.2 起只有
+  `sections` / `contexts` / `variables`，`tools` 在瀑布之后才由 provider 拼回，插件
+  却在该监听器里读取 `assembly.tools.filter(...)`，于是每轮装配都抛
+  `TypeError: Cannot read properties of undefined (reading 'filter')`，模型步骤直接
+  失败。该监听器已删除。
+
+### 变更
+
+- 隐藏内置 `edit` / `write` 改用 `ctx.tools.restrict({ deny })`，挂在每个 agent 自己的
+  context 上（`agent/created` → `agent.ctx.effect`）。这正是官方对「让某个 agent 看不到
+  工具」的规定做法：schema 展示、按名查找与执行三者保持一致。
+- 该限制是 `agent.ctx` 的 effect：卸载插件或销毁 agent 即自动解除，**不会留下改动**。
+  `edit` / `write` 会自己回来，不需要用户手动恢复任何配置。
+- 预设挂载的工具同样能被限制：preset registry 每个 revision 生成一个 generation
+  scope，并把 agent 的 scope key 绑成它的**子作用域**（`bindScopeParent`），因此
+  `tools.view(agent)` 读到的是继承工具，`restrict` 覆盖得到。此前 README 与本仓库
+  测试里「预设作用域不可限制」的结论是错的，已一并更正。
+- 设置改动即时生效：插件监听 `settings/document-updated`，开关翻转后对现存 agent
+  重新求值，不需要重启插件或重建 agent。
+- 限制安装是防错的：若组合里根本没有挂载某个工具，命名它会抛错，因此安装处捕获并
+  只记录警告，绝不因此中断 agent 创建。
+
+### 移除
+
+- 删除 `installToolGuard` 与 `withoutHiddenTools`：`restrict` 已经让工具对模型不可见，
+  按名守卫与装配过滤都不再需要。隐藏的工具再也不会「列着但调用被拒」。
+
+### 兼容性
+
+- `peerDependencies` 升级：`@deepseek-ai/dsh-*` 由 `^0.2.1-alpha.1` 改为
+  `^0.2.2-alpha.2`，`@deepseek-ai/cordis` 由 `~4.0.5-alpha.1` 改为 `~4.0.6-alpha.1`。
+- 开发基线同步升到 `0.2.2-alpha.2`。此前依赖锁在 `0.2.1-alpha.1`，宿主契约变化时
+  `tsc` 拿旧类型检查，永远不会报警——本次的崩溃正是因此逃过了发布前检查。
+
 ## 0.2.0-alpha.1 - 2026-10-23
 
 本次更新让 `apply_patch` 卡片的 diff 展开不再受 200 行预览上限限制，把未展开时的
